@@ -22,13 +22,28 @@ You re-explain the same context, or worse — the agent confidently undoes a har
 
 simplegraph-agentic takes a different approach:
 
-### Tiered Loading — Read What You Need, Not Everything
+### Tiered Loading — 16× Fewer Tokens at Session Start
 
-```
-Session start:    Read one ~50-line index (graph_index.md)        → ~1K tokens
-Per task:         Load 2–3 detail files from the routing table    → ~2K tokens
-Never:            Load the entire graph                           → 0 wasted tokens
-```
+Measured on a production codebase with **62 nodes** across 26 files (a complex full-stack PWA with identity, messaging, CDN caching, and compactor pipeline):
+
+| Approach | Tokens per session start | Tokens per task |
+|---|---|---|
+| **simplegraph (tiered)** | **~600** | **~2,400** |
+| Monolith (flat file) | ~9,700 | ~9,700 |
+| No memory (re-explain each time) | 0 up front, ~500–2,000 per re-explanation | compounds |
+
+**16× reduction** at session start. **4× reduction** for a typical task. The savings compound across every request in a session — the AI reads ~600 tokens once, then loads only the 2–3 files relevant to the current task.
+
+Run `bash scripts/token_benchmark.sh` on your own graph to measure your reduction ratio.
+
+### Compared to Other Approaches
+
+| Approach | Strengths | simplegraph advantage |
+|---|---|---|
+| **CLAUDE.md / .cursorrules** | Simple, zero setup | Flat files load everything every time. At 62 nodes of real knowledge, that's 9,700 tokens wasted per request. simplegraph loads ~600. |
+| **Aider repo-map** | Auto-generates structural map | Structural maps answer "where is X?" but not "what went wrong here?" or "why was this decision made?" simplegraph captures *intent and history*, not just *structure*. |
+| **Vector DB (Mem0, etc.)** | Scales to huge corpora, fuzzy retrieval | Requires infrastructure (DB server, embeddings). Retrieval is probabilistic — it might not surface the one invariant that prevents a regression. simplegraph is deterministic, git-native, and reviewable. |
+| **Fine-tuned models** | Encoded knowledge | Expensive, opaque, stale the moment code changes. simplegraph updates in the same commit as the code. |
 
 ### Typed, Linked Nodes — Follow Risk Chains
 
@@ -190,6 +205,7 @@ shared/
 | `scripts/auto_map_shared.sh` | Generates combined public API map across multiple repos |
 | `scripts/consistency_check.sh` | Verifies no broken edge references in the graph |
 | `scripts/stale_check.sh` | Flags nodes with old dates or dead file references |
+| `scripts/token_benchmark.sh` | Measures token efficiency — compare tiered vs monolith |
 | `scripts/seed_prompt.md` | One-shot prompt to bootstrap the graph from a cold start |
 
 ---
