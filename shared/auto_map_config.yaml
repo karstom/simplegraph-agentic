@@ -1,0 +1,15 @@
+# Shared Auto-Map Configuration
+#
+# Lists the repos to include when generating the shared auto-map
+# (shared/auto_map.md). The script scans each repo's public API surface only.
+#
+# Usage: bash scripts/auto_map_shared.sh
+#
+# Each entry is a path (relative to this file or absolute) to a repo directory.
+# Only exports / public interface symbols are included — not internals.
+
+repos:
+  # - ../auth-service
+  # - ../data-service
+  # - ../gateway
+  # - /home/team/repos/shared-lib

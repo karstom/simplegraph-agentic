@@ -1,0 +1,5 @@
+# simplegraph-agentic .gitignore
+# Generated artifacts — regenerate, don't commit
+core/auto_map.md
+core/.scratchpad.md
+shared/auto_map.md
