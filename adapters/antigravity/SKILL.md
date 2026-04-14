@@ -1,32 +1,33 @@
 ---
 name: simplegraph-agentic-memory
-description: "Persistent memory graph for this project. Read graph_index.md at session start before touching any code."
+description: "Persistent memory graph for this project. Read core/graph_index.md at session start before touching any code."
 ---
 
 # Memory Graph
 
 > [!IMPORTANT]
-> **Read `core/graph_index.md` at session start.** This ~40-line index maps every node
-> to its file and tells you which files to load for each task area.
-> **Do NOT load the full graph.** Only load detail files when working in those areas.
+> **The graph lives at `core/` in the project root.**
+> Use the `view_file` tool to read `core/graph_index.md` from the workspace root.
+> Do NOT assume a path — the workspace root contains `core/graph_index.md`.
 
 ## Instructions
 
-1. **Always read `core/graph_index.md` at session start.** It tells you what to load.
+1. **At session start:** Use `view_file` to open `core/graph_index.md` from the
+   workspace root. It's ~50 lines and routes you to the right detail files.
 
-2. **Use the task routing table** in `graph_index.md` to determine which detail files to load.
-   Only load files relevant to the current task.
+2. **Use the task routing table** to determine which files to load. Only load files
+   relevant to the current task. Load HIGH-priority nodes first.
 
-3. **Follow edge chains before touching risky areas.** If modifying a Component node,
-   check its `VIOLATED_BY` and `WATCHLIST` edges. If a Regression node has
-   `REGRESSED_N_TIMES >= 2`, treat the associated code as high-risk.
+3. **Check `core/anti_patterns.md` before generating any new code.**
 
-4. **Update the graph after any significant change.** See `core/HOW_TO_UPDATE.md`.
-   The minimum bar: any bug fix that could recur must produce an updated or new Regression node.
+4. **Follow edge chains before touching risky areas.** If a Regression node has
+   `REGRESSED_N_TIMES >= 2`, treat that code as high-risk.
+
+5. **Update the graph after any significant change.** See `core/HOW_TO_UPDATE.md`.
    Graph updates go in the **same commit** as the code change.
 
-5. **Do not proceed with implementation if you find contradictions** between the graph
-   and the current code without first flagging the discrepancy.
+6. **Do not proceed if you find contradictions** between the graph and the current code
+   without first flagging the discrepancy in your plan.
 
 ## Multi-Repo
 
