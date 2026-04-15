@@ -1,35 +1,39 @@
 ---
 name: simplegraph-agentic-memory
-description: "Persistent memory graph for this project. Read core/graph_index.md at session start before touching any code."
+description: "Persistent memory graph for this project. The graph index is embedded below — read it now before touching any code."
 ---
 
 # Memory Graph
 
 > [!IMPORTANT]
-> **The graph lives at `core/` in the project root.**
-> Use the `view_file` tool to read `core/graph_index.md` from the workspace root.
-> Do NOT assume a path — the workspace root contains `core/graph_index.md`.
+> **The graph index is embedded below. Read it now — do not skip.**
+> Then use the Task Routing table to load only the detail files relevant to your task.
+> Detail files live in `core/` in the project root.
+
+---
+
+<!-- EMBEDDED: core/graph_index.md — re-run setup.sh or paste updated index here when the index changes -->
+
+<!-- TODO: The graph index will be embedded here automatically by setup.sh.
+     If you installed manually, paste the contents of core/graph_index.md here. -->
+
+---
 
 ## Instructions
 
-1. **At session start:** Use `view_file` to open `core/graph_index.md` from the
-   workspace root. It's ~50 lines and routes you to the right detail files.
+1. **The index above is already loaded.** Use the Task Routing table to load the relevant `core/` detail files.
 
-2. **Use the task routing table** to determine which files to load. Only load files
-   relevant to the current task. Load HIGH-priority nodes first.
+2. **Load HIGH-priority nodes first.** Any `REGRESSED_N_TIMES >= 2` node is high-risk.
 
 3. **Check `core/anti_patterns.md` before generating any new code.**
 
-4. **Follow edge chains before touching risky areas.** If a Regression node has
-   `REGRESSED_N_TIMES >= 2`, treat that code as high-risk.
-
-5. **Update the graph after any significant change.** See `core/HOW_TO_UPDATE.md`.
+4. **Update the graph after any significant change.** See `core/HOW_TO_UPDATE.md`.
    Graph updates go in the **same commit** as the code change.
 
-6. **Do not proceed if you find contradictions** between the graph and the current code
+5. **Do not proceed if you find contradictions** between the graph and the current code
    without first flagging the discrepancy in your plan.
 
 ## Multi-Repo
 
-If this repo is part of a multi-repo project, check `core/graph_index.md` for the
+If this repo is part of a multi-repo project, check the embedded index for the
 shared graph path. Load the shared graph index when working across repo boundaries.

@@ -72,8 +72,21 @@ case "${adapter_choice}" in
   1)
     DEST="${TARGET}/.agent/skills/memory"
     mkdir -p "${DEST}"
-    cp "${SCRIPT_DIR}/adapters/antigravity/SKILL.md" "${DEST}/SKILL.md"
-    ok "Antigravity adapter installed → .agent/skills/memory/SKILL.md"
+    SKILL_DEST="${DEST}/SKILL.md"
+    cp "${SCRIPT_DIR}/adapters/antigravity/SKILL.md" "${SKILL_DEST}"
+    # Embed the project's graph_index.md directly into SKILL.md for reliable loading.
+    # Agents load skill files as context but may not actively call view_file.
+    # Embedding guarantees the index is seen without requiring a tool call.
+    INDEX="${TARGET}/core/graph_index.md"
+    if [ -f "${INDEX}" ]; then
+      INDEX_CONTENT=$(cat "${INDEX}")
+      # Replace the TODO placeholder with the actual index content
+      perl -i -0777 -pe "s|<!-- TODO:.*?-->|${INDEX_CONTENT}|s" "${SKILL_DEST}" 2>/dev/null || true
+      ok "Antigravity adapter installed → .agent/skills/memory/SKILL.md (graph index embedded)"
+    else
+      ok "Antigravity adapter installed → .agent/skills/memory/SKILL.md"
+      warn "graph_index.md not found — paste core/graph_index.md into SKILL.md manually for reliable loading"
+    fi
     ;;
   2)
     DEST="${TARGET}/.cursor/rules"
