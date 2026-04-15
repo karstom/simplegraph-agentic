@@ -79,10 +79,18 @@ case "${adapter_choice}" in
     # Embedding guarantees the index is seen without requiring a tool call.
     INDEX="${TARGET}/core/graph_index.md"
     if [ -f "${INDEX}" ]; then
-      INDEX_CONTENT=$(cat "${INDEX}")
-      # Replace the TODO placeholder with the actual index content
-      perl -i -0777 -pe "s|<!-- TODO:.*?-->|${INDEX_CONTENT}|s" "${SKILL_DEST}" 2>/dev/null || true
-      ok "Antigravity adapter installed → .agent/skills/memory/SKILL.md (graph index embedded)"
+      # Write a python script to do the embed — avoids shell/perl delimiter
+      # conflicts with | characters in markdown table rows
+      python3 -c "
+import sys
+skill = open('${SKILL_DEST}').read()
+index = open('${INDEX}').read()
+import re
+result = re.sub(r'<!-- TODO:.*?-->', index, skill, flags=re.DOTALL)
+open('${SKILL_DEST}', 'w').write(result)
+" 2>/dev/null && ok "Antigravity adapter installed → .agent/skills/memory/SKILL.md (graph index embedded)" \
+      || { ok "Antigravity adapter installed → .agent/skills/memory/SKILL.md"
+           warn "Could not embed index automatically — paste core/graph_index.md into SKILL.md manually"; }
     else
       ok "Antigravity adapter installed → .agent/skills/memory/SKILL.md"
       warn "graph_index.md not found — paste core/graph_index.md into SKILL.md manually for reliable loading"
