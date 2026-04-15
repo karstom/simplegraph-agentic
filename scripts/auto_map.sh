@@ -3,8 +3,8 @@
 # Generates a structural map of the codebase using ctags.
 #
 # Usage:
-#   bash scripts/auto_map.sh [PROJECT_DIR]
-#   bash scripts/auto_map.sh --public-only [PROJECT_DIR]
+#   bash core/scripts/auto_map.sh [PROJECT_DIR]
+#   bash core/scripts/auto_map.sh --public-only [PROJECT_DIR]
 #
 # Output: core/auto_map.md (gitignored — generated artifact)
 #

@@ -125,7 +125,7 @@ index, then loads specific detail files. Each step is small. This scales indefin
 |---|---|
 | `anti_patterns.md` | Things the AI should **never** generate — prevents wasted correction cycles |
 | `.scratchpad.md` | Session-local AI notes (gitignored). Promote to real nodes when ready |
-| `auto_map.md` | Auto-generated structural map (gitignored). Regenerate with `scripts/auto_map.sh` |
+| `auto_map.md` | Auto-generated structural map (gitignored). Regenerate with `core/scripts/auto_map.sh` |
 
 ---
 
@@ -133,11 +133,11 @@ index, then loads specific detail files. Each step is small. This scales indefin
 
 ```bash
 # Consistency check — verify no broken edge references
-bash scripts/consistency_check.sh
+bash core/scripts/consistency_check.sh
 
 # Stale check — flag old nodes and dead file references
-bash scripts/stale_check.sh [CORE_DIR] [MAX_AGE_DAYS]
+bash core/scripts/stale_check.sh [CORE_DIR] [MAX_AGE_DAYS]
 
 # Auto-map — generate structural repo map (requires ctags)
-bash scripts/auto_map.sh [PROJECT_DIR]
+bash core/scripts/auto_map.sh [PROJECT_DIR]
 ```

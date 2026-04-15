@@ -12,7 +12,20 @@
 
 set -euo pipefail
 
-CORE_DIR="${1:-$(pwd)/core}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Auto-detect core directory (mirrors consistency_check.sh logic)
+if [ "${1:-}" = "" ]; then
+  if [ "$(basename "$(dirname "$SCRIPT_DIR")")" = "core" ]; then
+    CORE_DIR="$(dirname "$SCRIPT_DIR")"
+  elif [ -d "$(dirname "$SCRIPT_DIR")/core" ]; then
+    CORE_DIR="$(dirname "$SCRIPT_DIR")/core"
+  else
+    CORE_DIR="$(pwd)/core"
+  fi
+else
+  CORE_DIR="$1"
+fi
 MAX_AGE_DAYS="${2:-90}"
 PROJECT_DIR="$(dirname "${CORE_DIR}")"
 FOUND_STALE=false

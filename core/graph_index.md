@@ -49,6 +49,6 @@
 | **Client / frontend** | `components/{CLIENT_COMPONENT}.md`, `decisions.md` |
 | **Testing** | `regressions.md`, `watchlists.md` |
 | **Investigating a past regression** | `regressions.md`, `archive/resolved_regressions.md` |
-| **Locating code / understanding structure** | `auto_map.md` _(generated — run `scripts/auto_map.sh` first)_ |
+| **Locating code / understanding structure** | `auto_map.md` _(generated — run `core/scripts/auto_map.sh` first)_ |
 | **Starting any new code generation** | `anti_patterns.md` _(always check before writing code)_ |
 

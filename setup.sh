@@ -41,7 +41,13 @@ fi
 # ── copy core scaffold ─────────────────────────────────────────────────────────
 say "Copying core/ scaffold..."
 cp -r "${SCRIPT_DIR}/core" "${TARGET}/core"
-ok "core/ installed at ${TARGET}/core/"
+# Install maintenance scripts into core/scripts/ (co-located with the graph)
+mkdir -p "${TARGET}/core/scripts"
+for script in consistency_check.sh stale_check.sh auto_map.sh auto_map_shared.sh token_benchmark.sh; do
+  [ -f "${SCRIPT_DIR}/scripts/${script}" ] && cp "${SCRIPT_DIR}/scripts/${script}" "${TARGET}/core/scripts/${script}"
+done
+chmod +x "${TARGET}/core/scripts/"*.sh 2>/dev/null || true
+ok "core/ installed at ${TARGET}/core/ (including core/scripts/)"
 
 # ── multi-repo ─────────────────────────────────────────────────────────────────
 echo ""
@@ -78,22 +84,22 @@ case "${adapter_choice}" in
     # Agents load skill files as context but may not actively call view_file.
     # Embedding guarantees the index is seen without requiring a tool call.
     INDEX="${TARGET}/core/graph_index.md"
-    if [ -f "${INDEX}" ]; then
-      # Write a python script to do the embed — avoids shell/perl delimiter
+    if [ -f "${INDEX}" ] && command -v python3 &>/dev/null; then
+      # Use python3 to do the embed — avoids shell/perl delimiter
       # conflicts with | characters in markdown table rows
       python3 -c "
-import sys
+import sys, re
 skill = open('${SKILL_DEST}').read()
 index = open('${INDEX}').read()
-import re
 result = re.sub(r'<!-- TODO:.*?-->', index, skill, flags=re.DOTALL)
 open('${SKILL_DEST}', 'w').write(result)
 " 2>/dev/null && ok "Antigravity adapter installed → .agent/skills/memory/SKILL.md (graph index embedded)" \
       || { ok "Antigravity adapter installed → .agent/skills/memory/SKILL.md"
-           warn "Could not embed index automatically — paste core/graph_index.md into SKILL.md manually"; }
+           warn "Could not embed index — paste core/graph_index.md into SKILL.md manually"; }
     else
       ok "Antigravity adapter installed → .agent/skills/memory/SKILL.md"
-      warn "graph_index.md not found — paste core/graph_index.md into SKILL.md manually for reliable loading"
+      [ ! -f "${INDEX}" ] && warn "graph_index.md not found — paste core/graph_index.md into SKILL.md manually"
+      ! command -v python3 &>/dev/null && warn "python3 not found — paste core/graph_index.md into SKILL.md manually"
     fi
     ;;
   2)
@@ -137,7 +143,7 @@ esac
 # ── consistency check ─────────────────────────────────────────────────────────
 echo ""
 say "Running consistency check on installed core/..."
-if bash "${SCRIPT_DIR}/scripts/consistency_check.sh" 2>/dev/null; then
+if bash "${TARGET}/core/scripts/consistency_check.sh" 2>/dev/null; then
   ok "Graph is consistent."
 else
   warn "Consistency check flagged an issue — this is normal for a fresh install."
