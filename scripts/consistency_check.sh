@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # simplegraph-agentic consistency check
 # Verifies no broken edge references in the core/ graph files.
-# Run from the repo root: bash scripts/consistency_check.sh
+# Run from the repo root: bash core/scripts/consistency_check.sh
 
 set -euo pipefail
 
@@ -20,21 +20,26 @@ if [ ! -d "$CORE_DIR" ]; then
   exit 1
 fi
 
-# Strip HTML comments, then scan. This avoids false positives from example nodes
-# inside <!-- --> blocks in template files.
 STRIPPED=$(mktemp /tmp/sg_stripped.XXXXXX)
-trap 'rm -f "${STRIPPED}"' EXIT
+EDGE_TARGETS=$(mktemp /tmp/sg_edge_targets.XXXXXX)
+NODE_IDS=$(mktemp /tmp/sg_node_ids.XXXXXX)
+trap 'rm -f "${STRIPPED}" "${EDGE_TARGETS}" "${NODE_IDS}"' EXIT
 
-find "$CORE_DIR" -name '*.md' -exec cat {} + | \
-  perl -0777 -pe 's/<!--.*?-->//gs' > "${STRIPPED}"
+# Find only hand-authored .md files — exclude generated/gitignored files
+# Process each file individually to avoid perl slurp stall on large concatenations
+: > "${STRIPPED}"
+while IFS= read -r f; do
+  case "$(basename "$f")" in
+    auto_map.md|.scratchpad.md) continue ;;
+  esac
+  # Strip HTML comments from each file and append
+  perl -0777 -pe 's/<!--.*?-->//gs' < "$f" >> "${STRIPPED}"
+done < <(find "$CORE_DIR" -name '*.md' -not -name 'auto_map.md' -not -name '.scratchpad.md' | sort)
 
-grep -oP '→ \K[A-Z_]+' "${STRIPPED}" 2>/dev/null | sort -u > /tmp/sg_edge_targets.txt || true
-grep -oP '## NODE: \K[A-Z_]+' "${STRIPPED}" 2>/dev/null | sort -u > /tmp/sg_node_ids.txt || true
+grep -oP '→ \K[A-Z_]+' "${STRIPPED}" 2>/dev/null | sort -u > "${EDGE_TARGETS}" || true
+grep -oP '## NODE: \K[A-Z_]+' "${STRIPPED}" 2>/dev/null | sort -u > "${NODE_IDS}" || true
 
-# Ensure files exist even if empty
-touch /tmp/sg_edge_targets.txt /tmp/sg_node_ids.txt
-
-BROKEN=$(comm -23 /tmp/sg_edge_targets.txt /tmp/sg_node_ids.txt)
+BROKEN=$(comm -23 "${EDGE_TARGETS}" "${NODE_IDS}")
 
 if [ -z "$BROKEN" ]; then
   echo "✓ All edge references are valid."
