@@ -10,6 +10,13 @@ accepts a persistent system prompt.
 
 ## Paste this into your tool's custom instructions
 
+> **For tools without file-reading capability** (ChatGPT, Gemini Gems, etc.):
+> Also paste the contents of `core/graph_index.md` directly below these instructions.
+> This guarantees the agent sees the index — otherwise it has no way to load it.
+>
+> **For tools with file-reading** (Windsurf, Aider, Cline, etc.):
+> The instruction below to read `core/graph_index.md` is sufficient.
+
 ```
 This project uses a persistent memory graph in the `core/` directory.
 
