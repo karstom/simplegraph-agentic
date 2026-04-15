@@ -6,6 +6,7 @@ description: "Persistent memory graph for this project. The graph index is embed
 # Memory Graph
 
 > [!IMPORTANT]
+> **Start of every session:**
 > **The graph index is embedded below. Read it now — do not skip.**
 > Then use the Task Routing table to load only the detail files relevant to your task.
 > Detail files live in `core/` in the project root.

@@ -20,7 +20,8 @@ accepts a persistent system prompt.
 ```
 This project uses a persistent memory graph in the `core/` directory.
 
-MANDATORY: At the start of every session, read `core/graph_index.md` before any other action.
+MANDATORY: At the start of every session,
+CRITICAL: You MUST read (e.g. using a file reading tool) `core/graph_index.md` as your very first action in every conversation, without exception.
 It is approximately 40 lines. It contains a Quick Index of all graph nodes and a Task Routing
 table that tells you exactly which files to load for your current task.
 

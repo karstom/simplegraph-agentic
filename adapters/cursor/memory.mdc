@@ -5,7 +5,8 @@ alwaysApply: true
 
 # simplegraph-agentic Memory Graph
 
-**Session start (mandatory):** Read `core/graph_index.md` before any other action.
+**Session start (mandatory):**
+CRITICAL: You MUST read (e.g. using a file reading tool) `core/graph_index.md` as your very first action in every conversation, without exception.
 It is ~40 lines. Do not skip this step. Do not load the full graph.
 
 ## Rules

@@ -3,7 +3,7 @@
 This project uses a persistent memory graph stored in `core/`.
 
 ## Session Start
-ALWAYS read `core/graph_index.md` before writing or modifying any code.
+CRITICAL: You MUST read `core/graph_index.md` as your very first action in every conversation, without exception.
 It is approximately 40 lines. Use the task routing table to identify which detail
 files to load. Only load files relevant to the current task.
 

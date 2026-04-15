@@ -6,8 +6,9 @@ Add this section to your project's `CLAUDE.md` to enable persistent memory graph
 
 ## Memory Graph
 
-This project uses a persistent memory graph. Read `core/graph_index.md` at the start of
-every session before touching any code. It is ~40 lines and tells you exactly which files
+This project uses a persistent memory graph.
+CRITICAL: You MUST read `core/graph_index.md` as your very first action in every session, without exception.
+It is ~40 lines and tells you exactly which files
 to load for your current task. Do not load the full graph — only load detail files listed
 in the task routing table that are relevant to your current task.
 

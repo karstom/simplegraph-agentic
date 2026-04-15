@@ -101,6 +101,16 @@ open('${SKILL_DEST}', 'w').write(result)
       [ ! -f "${INDEX}" ] && warn "graph_index.md not found — paste core/graph_index.md into SKILL.md manually"
       ! command -v python3 &>/dev/null && warn "python3 not found — paste core/graph_index.md into SKILL.md manually"
     fi
+
+    # Enforce strict session start rule for Antigravity
+    if ! grep -q "AGENT MEMORY AND CONTEXT" "${TARGET}/.antigravityrules" 2>/dev/null; then
+      echo "" >> "${TARGET}/.antigravityrules"
+      echo "# 6. AGENT MEMORY AND CONTEXT" >> "${TARGET}/.antigravityrules"
+      echo "# CRITICAL: You MUST execute view_file on \`.agent/skills/memory/SKILL.md\`" >> "${TARGET}/.antigravityrules"
+      echo "# as your very first action in every conversation, without exception." >> "${TARGET}/.antigravityrules"
+      echo "# Do this before writing any code or answering the user's first query." >> "${TARGET}/.antigravityrules"
+      say "Injected strict graph loading rule into .antigravityrules"
+    fi
     ;;
   2)
     DEST="${TARGET}/.cursor/rules"
