@@ -216,6 +216,94 @@ shared/
 
 ---
 
+## Keeping the Graph Fresh
+
+The graph only stays useful if it's updated when code changes. Relying on discipline alone doesn't work — for agents or humans. The three maintenance tasks need different trigger strategies:
+
+| Task | Why it drifts | Right mechanism |
+|---|---|---|
+| **Edge consistency** (`consistency_check.sh`) | Nodes renamed/deleted without updating edges | **CI required status check** — enforced on every PR |
+| **Structural map** (`auto_map.sh`) | New files added without regenerating the map | **Git pre-commit hook** — automatic, local |
+| **Graph node updates** (regressions, decisions, etc.) | Semantic judgment the agent skips under time pressure | **SDLC workflow file** — anchor it to a step the agent already follows |
+
+### Layer 1 — Consistency Check via GitHub Actions
+
+The only fully enforceable layer. Pure bash, no dependencies, runs in under a second. Add it as a required branch protection check so broken edges can never merge.
+
+```yaml
+# .github/workflows/graph-check.yml
+name: Graph Consistency
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  graph-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check graph edge consistency
+        run: bash core/scripts/consistency_check.sh
+```
+
+Then in **GitHub → Settings → Branches → Branch protection rules for `main`**: enable "Require status checks to pass" and add `graph-check` as a required check.
+
+### Layer 2 — Auto-Map via Git Pre-Commit Hook
+
+`auto_map.sh` output is gitignored (it's a local working artifact, not committed state), so CI can't enforce it. A pre-commit hook keeps it fresh automatically.
+
+```bash
+# Add to .git/hooks/pre-commit, then: chmod +x .git/hooks/pre-commit
+#!/usr/bin/env bash
+if command -v ctags &>/dev/null; then
+  bash core/scripts/auto_map.sh . 2>/dev/null || true
+fi
+```
+
+For teams using [pre-commit](https://pre-commit.com/), distribute it via `.pre-commit-config.yaml`:
+
+```yaml
+repos:
+  - repo: local
+    hooks:
+      - id: auto-map
+        name: Regenerate simplegraph auto_map
+        language: system
+        entry: bash core/scripts/auto_map.sh .
+        pass_filenames: false
+        always_run: true
+```
+
+### Layer 3 — Graph Node Updates via an SDLC Workflow File
+
+Node updates (regressions, decisions, watchlists) require judgment — they can't be automated. The most reliable approach is to embed the instruction in a workflow file the agent is **already required to follow** at a merge or promotion checkpoint. Create a project-specific file at whatever path your AI adapter reads (e.g. `.agent/workflows/promote.md`, a section in `CONTRIBUTING.md`, or custom instructions) with a checklist like:
+
+```markdown
+## Before merging — update the memory graph
+
+For every significant change in this PR, check whether any graph nodes need updating.
+
+Run in order:
+1. bash core/scripts/consistency_check.sh
+2. bash core/scripts/auto_map.sh
+
+| What changed | Graph action |
+|---|---|
+| New service / module | Add Component node in `components/{NAME}.md` |
+| Bug introduced and fixed | Add/update Regression node in `regressions.md` |
+| Architectural decision made | Add Decision node in `decisions.md` |
+| Hard invariant discovered | Add Invariant node in `invariants.md` |
+| Dangerous code area found | Add/update Watchlist node in `watchlists.md` |
+
+Commit any graph changes before merging.
+```
+
+The key is anchoring the update to a step the agent already executes, rather than relying on it happening spontaneously.
+
+---
+
 ## How the Graph Grows
 
 You don't build the graph all at once. It accumulates naturally:
