@@ -1,6 +1,6 @@
 ---
 name: simplegraph-agentic-memory
-description: "Persistent memory graph for this project. The graph index is embedded below — read it now before touching any code."
+description: "MANDATORY for all tasks. Contains architecture rules, active bugs, dangerous code zones, and anti-patterns for this codebase. Required context for bug fixes, UI work, feature development, refactoring, and deployments. Read before touching any code."
 ---
 
 # Memory Graph

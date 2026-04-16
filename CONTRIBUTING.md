@@ -2,6 +2,31 @@
 
 ## Adding a New Adapter
 
+### The Relevance Threshold Problem
+
+AI agents that score context files by semantic relevance will **skip a skill if the task doesn't appear related to "memory" or "knowledge graphs."** A UI bug or deployment task won't trigger a skill named "memory" with a description about "persistent knowledge." Every adapter must solve this.
+
+Three techniques, in order of effectiveness:
+
+**1. Write an aggressive description (mandatory)**
+The `description` field is the primary relevance signal. It must enumerate the task types it covers:
+```
+"MANDATORY for all tasks. Contains architecture rules, active bugs, dangerous code
+zones, and anti-patterns. Required context for bug fixes, UI work, feature
+development, refactoring, and deployments. Read before touching any code."
+```
+
+**2. Name the skill to be un-skippable (recommended)**
+Use a name that can't be filtered by a task-specific heuristic:
+- ✅ `00-mandatory-architecture-context`
+- ✅ `codebase-memory` (broad)
+- ❌ `memory-graph` (sounds optional)
+
+**3. Register as a Knowledge Item if supported (tool-specific)**
+Some tools (e.g. Antigravity) have a hardcoded boot sequence that reads Knowledge Items before any context loading. Packaging a pointer as a KI guarantees a read regardless of task type. Consult your tool's docs for the KI format.
+
+### Adapter Requirements
+
 Adapters live in `adapters/{tool-name}/`. A valid adapter must:
 
 1. **Instruct the AI to read `core/graph_index.md` at session start**, before any other action.
