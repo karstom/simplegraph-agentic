@@ -141,3 +141,122 @@ bash core/scripts/stale_check.sh [CORE_DIR] [MAX_AGE_DAYS]
 # Auto-map — generate structural repo map (requires ctags)
 bash core/scripts/auto_map.sh [PROJECT_DIR]
 ```
+
+---
+
+## Keeping the Graph Fresh — Automation
+
+The graph only stays useful if it's updated when code changes. Relying on
+discipline alone doesn't work — for agents or humans. The three maintenance
+tasks need different trigger strategies:
+
+| Task | Why it drifts | Right enforcement mechanism |
+|---|---|---|
+| **Edge consistency** (`consistency_check.sh`) | Nodes get renamed or deleted without updating edges | **CI required status check** — fails the PR automatically |
+| **Structural map** (`auto_map.sh`) | New files/services added without regenerating the map | **Git pre-commit hook** — runs locally before every commit |
+| **Graph node updates** (regressions, decisions, etc.) | Semantic work the agent skips under time pressure | **SDLC workflow file** — an AI-readable checklist the agent is explicitly instructed to follow |
+
+### Layer 1 — Consistency Check via GitHub Actions (Recommended)
+
+This is the only fully enforceable layer. Add it as a required status check
+so broken edges can never merge to your main branch.
+
+```yaml
+# .github/workflows/graph-check.yml
+name: Graph Consistency
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  graph-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check graph edge consistency
+        run: bash core/scripts/consistency_check.sh
+```
+
+Then in **GitHub → Settings → Branches → Branch protection rules for `main`**:
+enable "Require status checks to pass" and add `graph-check` as a required check.
+
+> **Note:** `consistency_check.sh` is pure bash with no dependencies. It runs
+> in under a second on any repo. `stale_check.sh` can be added here too if you
+> want CI to flag nodes with dead file references, though consider making it
+> advisory (non-blocking) since stale warnings are noise on fast-moving projects.
+
+### Layer 2 — Auto-Map via Git Pre-Commit Hook (Optional but Recommended)
+
+`auto_map.sh` output is gitignored (it's a local working artifact, not
+committed state), so CI can't enforce it. A pre-commit hook regenerates it
+automatically before every commit, ensuring the agent always has a fresh map.
+
+Add to `.git/hooks/pre-commit` in each developer's clone (or use
+[pre-commit](https://pre-commit.com/) to distribute it via config):
+
+```bash
+#!/usr/bin/env bash
+# Regenerate structural map before each commit (requires Universal Ctags)
+if command -v ctags &>/dev/null; then
+  bash core/scripts/auto_map.sh . 2>/dev/null || true
+fi
+```
+
+```bash
+chmod +x .git/hooks/pre-commit
+```
+
+For teams using [pre-commit](https://pre-commit.com/), add a local hook to
+`.pre-commit-config.yaml`:
+
+```yaml
+repos:
+  - repo: local
+    hooks:
+      - id: auto-map
+        name: Regenerate simplegraph auto_map
+        language: system
+        entry: bash core/scripts/auto_map.sh .
+        pass_filenames: false
+        always_run: true
+```
+
+### Layer 3 — Graph Node Updates via an SDLC Workflow File (Highest Leverage)
+
+Graph node updates (adding regressions, decisions, watchlists) require
+judgment — they can't be automated. The most reliable way to ensure agents
+do them is to embed the instruction in a workflow file the agent is already
+required to follow at a natural SDLC checkpoint.
+
+**Create a project-specific workflow file** at a path your AI adapter reads
+(e.g. `.agent/workflows/promote.md`, `CONTRIBUTING.md`, or a custom
+instructions section) and include a checklist step like:
+
+```markdown
+## Before merging to main — update the memory graph
+
+For every significant change in this PR, check whether any graph nodes need
+updating. Run in order:
+
+1. bash core/scripts/consistency_check.sh
+2. bash core/scripts/auto_map.sh
+
+Triggers:
+| What changed | Graph action |
+|---|---|
+| New service / module | Add Component node in components/{NAME}.md |
+| Bug introduced and fixed | Add/update Regression node in regressions.md |
+| Architectural decision made | Add Decision node in decisions.md |
+| Hard invariant discovered | Add Invariant node in invariants.md |
+| Dangerous code area found | Add/update Watchlist node in watchlists.md |
+
+Commit any graph changes before merging.
+```
+
+The key is **anchoring the graph update to a step the agent already executes**
+(code review, promotion, PR creation) rather than relying on it happening
+spontaneously. The zerofeed project uses this approach — the graph update
+and auto_map regeneration are baked into its promotion ritual, which the
+agent is explicitly invoked to run before every production deployment.
