@@ -27,14 +27,14 @@ You SHOULD update a node when:
 Every node follows this exact format:
 
 ```markdown
-## NODE: UNIQUE_NODE_ID
+## NODE: YOUR_NODE_ID
 **Type:** Component | Invariant | Regression | Decision | Watchlist
 **Priority:** HIGH | MEDIUM | LOW
 **Label:** Human-readable name
 **Summary:** 2–4 sentences. What this is, why it matters, what went wrong (for regressions).
 **Edges:**
-- EDGE_TYPE → other_node_id: brief explanation of the relationship
-**Files:** `path/to/file.ts`, `path/to/other.py`
+- EDGE_TYPE → OTHER_NODE_ID: brief explanation of the relationship
+**Files:** `src/path/to/your/file.ts`, `src/path/to/other.py`
 **LastUpdated:** YYYY-MM-DD
 ```
 

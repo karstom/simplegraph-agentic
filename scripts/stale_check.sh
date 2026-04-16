@@ -70,17 +70,29 @@ echo ""
 # ── check 2: dead file references ────────────────────────────────────────────
 echo "── Nodes referencing files that no longer exist ──"
 
-DEAD_REFS=$(grep -rn "^\*\*Files:\*\*" --include='*.md' "${CORE_DIR}" | while IFS= read -r line; do
-  FILE=$(echo "$line" | cut -d: -f1)
-  NODE_ID=$(grep -B10 "Files:" "$FILE" 2>/dev/null | grep -oP '## NODE: \K[A-Z_]+' | tail -1 || echo "unknown")
+DEAD_REFS=$(find "${CORE_DIR}" -name '*.md' -not -name 'auto_map.md' -not -name '.scratchpad.md' | sort | while IFS= read -r mdfile; do
+  # Strip HTML comments and fenced code blocks before scanning
+  # — avoids flagging example paths in <!-- --> blocks and ```...``` template blocks
+  stripped=$(perl -0777 -e '
+    local $/; my $t = <STDIN>;
+    $t =~ s/<!--.*?-->//gs;
+    $t =~ s/```.*?```//gs;
+    print $t;
+  ' < "$mdfile")
 
-  # Extract backtick-quoted file paths
-  REFS=$(echo "$line" | grep -oP '`[^`]+`' | tr -d '`')
-  for ref in $REFS; do
-    FULL_PATH="${PROJECT_DIR}/${ref}"
-    if [ ! -f "${FULL_PATH}" ] && [ ! -d "${FULL_PATH}" ]; then
-      echo "  💀 ${NODE_ID} → ${ref} (not found)"
-    fi
+  # Extract **Files:** lines from the stripped content, with line context for NODE_ID lookup
+  echo "$stripped" | grep -n "^\*\*Files:\*\*" 2>/dev/null || true | while IFS= read -r fileline; do
+    lineno=$(echo "$fileline" | cut -d: -f1)
+    # Find NODE_ID from the 10 lines above the Files: line in the stripped content
+    NODE_ID=$(echo "$stripped" | head -n "$lineno" | tail -n 10 | grep -oP '## NODE: \K[A-Z_]+' | tail -1 || echo "unknown")
+
+    REFS=$(echo "$fileline" | grep -oP '`[^`]+`' | tr -d '`')
+    for ref in $REFS; do
+      FULL_PATH="${PROJECT_DIR}/${ref}"
+      if [ ! -f "${FULL_PATH}" ] && [ ! -d "${FULL_PATH}" ]; then
+        echo "  💀 ${NODE_ID} → ${ref} (not found in $(basename "$mdfile"))"
+      fi
+    done
   done
 done)
 

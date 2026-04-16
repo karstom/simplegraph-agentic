@@ -105,7 +105,7 @@ open('${SKILL_DEST}', 'w').write(result)
     # Enforce strict session start rule for Antigravity
     if ! grep -q "AGENT MEMORY AND CONTEXT" "${TARGET}/.antigravityrules" 2>/dev/null; then
       echo "" >> "${TARGET}/.antigravityrules"
-      echo "# 6. AGENT MEMORY AND CONTEXT" >> "${TARGET}/.antigravityrules"
+      echo "# AGENT MEMORY AND CONTEXT" >> "${TARGET}/.antigravityrules"
       echo "# CRITICAL: You MUST execute view_file on \`.agent/skills/memory/SKILL.md\`" >> "${TARGET}/.antigravityrules"
       echo "# as your very first action in every conversation, without exception." >> "${TARGET}/.antigravityrules"
       echo "# Do this before writing any code or answering the user's first query." >> "${TARGET}/.antigravityrules"

@@ -1,15 +1,26 @@
-# Example Component Node
+# Component Nodes
 
-> This is a template file. Copy it to `components/{YOUR_COMPONENT_NAME}.md` and fill it in.
-> Delete this file once you have real component nodes.
+Add one file per major service, module, or subsystem in your project.
 
----
+**Naming:** `components/{YOUR_COMPONENT_NAME}.md` — use UPPER_SNAKE_CASE for the node ID.
 
-## NODE: EXAMPLE_COMPONENT
+**Template:**
+
+```markdown
+## NODE: YOUR_COMPONENT_NAME
 **Type:** Component
-**Label:** Example Component
-**Summary:** A brief description of what this component does, why it exists, and any important constraints. 2–4 sentences. Focus on what an AI would get wrong without this context.
+**Label:** Human-readable component name
+**Summary:** What this component does, why it exists, and what an AI would get wrong
+without this context. Keep to 2–4 sentences.
 **Edges:**
-- _(none yet — add edges once you have other nodes to reference)_
-**Files:** `src/services/ExampleService.ts`, `src/api/example.ts`
+- DEPENDS_ON → OTHER_NODE_ID: why this component needs the other
+**Files:** `src/path/to/main-file.ts`, `src/path/to/other.ts`
 **LastUpdated:** YYYY-MM-DD
+```
+
+Focus on components where the AI is most likely to introduce bugs:
+- Services with non-obvious side effects
+- Modules with strict initialization order
+- Components that have regressed before
+
+3–5 well-scoped components beat 20 shallow ones.
