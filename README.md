@@ -142,6 +142,12 @@ See `shared/graph_index.md` for the full multi-repo setup guide.
 
 The generic adapter works with ChatGPT Projects, Gemini Gems, Windsurf, Aider, Cline, or any tool that accepts a persistent system prompt.
 
+> **Antigravity tip — guaranteed loading:** Antigravity reads Knowledge Items (KIs) during its
+> boot sequence *before* relevance scoring. For zero-miss loading, copy your `core/graph_index.md`
+> into `.gemini/antigravity/knowledge/{your-project}/artifacts/graph_index.md` and add a
+> `metadata.json` alongside it. The agent will read it on every session regardless of task type.
+> See `CONTRIBUTING.md` for the full format.
+
 ---
 
 ## Graph Structure
