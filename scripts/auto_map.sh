@@ -46,10 +46,14 @@ if ! command -v ctags &>/dev/null; then
 fi
 
 # ── configure exclusions ──────────────────────────────────────────────────────
-EXCLUDE_DIRS="node_modules,.git,dist,build,.next,__pycache__,venv,.venv,vendor,target,core,shared"
+EXCLUDE_DIRS="node_modules,.git,dist,build,.next,__pycache__,venv,.venv,vendor,target,core,shared,.cache"
+EXCLUDE_PATTERNS="*.parquet *.log *.trace *.json.lock"
 
 # ── generate tags ─────────────────────────────────────────────────────────────
-TAGS_FILE=$(mktemp /tmp/sg_tags.XXXXXX)
+# Use a tempfile path but DELETE it before writing — ctags refuses to overwrite
+# an existing empty file when --output-format=json is set. We use -f - (stdout)
+# and redirect to the tempfile ourselves instead.
+TAGS_FILE=$(mktemp -u /tmp/sg_tags.XXXXXX)  # -u: generate name only, don't create
 trap 'rm -f "${TAGS_FILE}"' EXIT
 
 CTAGS_OPTS=(
@@ -57,12 +61,18 @@ CTAGS_OPTS=(
   --fields=+KnS
   --output-format=json
   --sort=no
+  -f -
 )
 
-# Add exclusions
+# Add directory exclusions
 IFS=',' read -ra DIRS <<< "$EXCLUDE_DIRS"
 for dir in "${DIRS[@]}"; do
   CTAGS_OPTS+=(--exclude="${dir}")
+done
+
+# Add file pattern exclusions (binary/data files that cause hangs)
+for pat in $EXCLUDE_PATTERNS; do
+  CTAGS_OPTS+=(--exclude="${pat}")
 done
 
 # Public-only mode: restrict to exported/public symbols
@@ -76,7 +86,7 @@ if [ "$PUBLIC_ONLY" = true ]; then
   )
 fi
 
-ctags "${CTAGS_OPTS[@]}" -o "${TAGS_FILE}" "${PROJECT_DIR}" 2>/dev/null || true
+ctags "${CTAGS_OPTS[@]}" "${PROJECT_DIR}" 2>/dev/null > "${TAGS_FILE}" || true
 
 # ── parse tags into markdown ──────────────────────────────────────────────────
 {
