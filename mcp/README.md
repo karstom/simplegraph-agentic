@@ -92,11 +92,65 @@ Add to `.vscode/mcp.json`:
 }
 ```
 
-### Environment Variables
+## Multi-project setup
+
+The MCP server is inherently project-scoped — it reads one `core/` directory. How you handle
+multiple projects depends on the client:
+
+### Cursor / VS Code — automatic
+
+Use `${workspaceFolder}` in the config. Each workspace resolves independently:
+
+```json
+"env": { "SIMPLEGRAPH_ROOT": "${workspaceFolder}/core" }
+```
+
+No per-project configuration needed.
+
+### Claude Desktop — named server instances
+
+`claude_desktop_config.json` is global, so register one entry per project with a unique name.
+Claude namespaces tools by server name, so the agent naturally calls the right one:
+
+```json
+{
+  "mcpServers": {
+    "sg-zerofeed": {
+      "command": "node",
+      "args": ["/path/to/simplegraph-agentic/mcp/dist/index.js"],
+      "env": { "SIMPLEGRAPH_ROOT": "/path/to/zerofeed/core" }
+    },
+    "sg-other-project": {
+      "command": "node",
+      "args": ["/path/to/simplegraph-agentic/mcp/dist/index.js"],
+      "env": { "SIMPLEGRAPH_ROOT": "/path/to/other-project/core" }
+    }
+  }
+}
+```
+
+Claude will see `sg-zerofeed` tools and `sg-other-project` tools as distinct namespaces.
+
+### Shared / cross-repo graph
+
+If your team uses a `shared/` graph (see simplegraph's multi-repo feature), add
+`SIMPLEGRAPH_SHARED` alongside `SIMPLEGRAPH_ROOT`. The server merges both:
+- Read: all tools search both graphs; shared nodes are tagged `[shared]` in results
+- Write: `add_node` and `update_node` always write to the primary project graph
+
+```json
+"env": {
+  "SIMPLEGRAPH_ROOT": "/path/to/project/core",
+  "SIMPLEGRAPH_SHARED": "/path/to/shared/core"
+}
+```
+
+## Environment variables
 
 | Variable | Default | Description |
 |---|---|---|
-| `SIMPLEGRAPH_ROOT` | `./core` (relative to cwd) | Absolute path to your project's `core/` directory |
+| `SIMPLEGRAPH_ROOT` | `./core` (relative to cwd) | Path to your project's `core/` directory |
+| `SIMPLEGRAPH_SHARED` | _(none)_ | Optional: path to shared team graph `core/` — merged into all read operations |
 
 ## Example agent workflow
 

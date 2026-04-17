@@ -2,16 +2,12 @@
 // simplegraph-agentic MCP server
 // Exposes memory graph tools to MCP-compatible AI agents (Claude, Cursor, etc.)
 //
-// Usage: SIMPLEGRAPH_ROOT=/path/to/project/core node dist/index.js
+// Env vars:
+//   SIMPLEGRAPH_ROOT    — path to project's core/ directory (required)
+//   SIMPLEGRAPH_SHARED  — path to shared team graph's core/ directory (optional)
 //
-// Tools exposed:
-//   simplegraph_index        — Get the graph index and task routing table
-//   simplegraph_nodes        — Get nodes by category
-//   simplegraph_check_files  — Check files for known issues (call before editing)
-//   simplegraph_anti_patterns — Get anti-patterns (call before generating code)
-//   simplegraph_search        — Search across all nodes
-//   simplegraph_add_node      — Add a new node (after fixing a bug / making a decision)
-//   simplegraph_update_node   — Update a node field (e.g. increment REGRESSED_N_TIMES)
+// Multi-project (Claude Desktop): register one named server entry per project.
+// Cursor/VS Code: use ${workspaceFolder}/core — automatically project-scoped.
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -29,41 +25,60 @@ const GRAPH_ROOT = process.env.SIMPLEGRAPH_ROOT
   ? path.resolve(process.env.SIMPLEGRAPH_ROOT)
   : path.resolve(process.cwd(), "core");
 
+// Optional second graph (shared/ cross-repo nodes). Read-only from this server.
+const SHARED_ROOT = process.env.SIMPLEGRAPH_SHARED
+  ? path.resolve(process.env.SIMPLEGRAPH_SHARED)
+  : null;
+
 // ── File I/O ──────────────────────────────────────────────────────────────────
 
-function readGraphFile(name: string): string {
+function readGraphFile(name: string, root: string = GRAPH_ROOT): string {
   try {
-    return fs.readFileSync(path.join(GRAPH_ROOT, name), "utf-8");
+    return fs.readFileSync(path.join(root, name), "utf-8");
   } catch {
     return "";
   }
 }
 
 function writeGraphFile(name: string, content: string): void {
+  // Writes always go to the primary project root, never the shared root.
   const fullPath = path.join(GRAPH_ROOT, name);
   fs.mkdirSync(path.dirname(fullPath), { recursive: true });
   fs.writeFileSync(fullPath, content, "utf-8");
 }
 
-function getAllNodes(): GraphNode[] {
+function getNodesFromRoot(root: string, tag?: string): GraphNode[] {
   const coreFiles = ["regressions.md", "invariants.md", "decisions.md", "watchlists.md"];
   const nodes: GraphNode[] = [];
 
   for (const f of coreFiles) {
-    nodes.push(...parseNodes(readGraphFile(f), f));
+    const content = readGraphFile(f, root);
+    const parsed = parseNodes(content, f);
+    // Tag shared nodes so they're identifiable in output
+    if (tag) parsed.forEach(n => { n.sourceFile = `[${tag}] ${n.sourceFile}`; });
+    nodes.push(...parsed);
   }
 
-  // Scan components/ directory
-  const compDir = path.join(GRAPH_ROOT, "components");
+  const compDir = path.join(root, "components");
   if (fs.existsSync(compDir)) {
     for (const file of fs.readdirSync(compDir)) {
       if (file.endsWith(".md")) {
         const rel = `components/${file}`;
-        nodes.push(...parseNodes(readGraphFile(rel), rel));
+        const parsed = parseNodes(readGraphFile(rel, root), rel);
+        if (tag) parsed.forEach(n => { n.sourceFile = `[${tag}] ${n.sourceFile}`; });
+        nodes.push(...parsed);
       }
     }
   }
 
+  return nodes;
+}
+
+function getAllNodes(): GraphNode[] {
+  const nodes = getNodesFromRoot(GRAPH_ROOT);
+  if (SHARED_ROOT) {
+    nodes.push(...getNodesFromRoot(SHARED_ROOT, "shared"));
+  }
   return nodes;
 }
 
@@ -241,7 +256,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           `graph_index.md not found at ${GRAPH_ROOT}. ` +
           `Set SIMPLEGRAPH_ROOT env var to your project's core/ directory.`
         );
-        return ok(content);
+        let result = content;
+        if (SHARED_ROOT) {
+          const shared = readGraphFile("graph_index.md", SHARED_ROOT);
+          if (shared) result += `\n\n---\n\n**Shared graph** (${SHARED_ROOT}):\n\n${shared}`;
+        }
+        return ok(result);
       }
 
       case "simplegraph_nodes": {
@@ -406,7 +426,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  process.stderr.write(`simplegraph-mcp v0.1.0 ready\nGRAPH_ROOT: ${GRAPH_ROOT}\n`);
+  process.stderr.write(
+    `simplegraph-mcp v0.1.0 ready\n` +
+    `  GRAPH_ROOT:  ${GRAPH_ROOT}\n` +
+    (SHARED_ROOT ? `  SHARED_ROOT: ${SHARED_ROOT}\n` : "")
+  );
 }
 
 main().catch((e) => {
