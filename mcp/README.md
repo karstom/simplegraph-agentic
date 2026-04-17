@@ -38,6 +38,24 @@ npm run build
 
 ## Configuration
 
+### Antigravity
+
+Add to `~/.gemini/antigravity/mcp_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "sg-my-project": {
+      "command": "node",
+      "args": ["/absolute/path/to/simplegraph-agentic/mcp/dist/index.js"],
+      "env": {
+        "SIMPLEGRAPH_ROOT": "/absolute/path/to/your-project/core"
+      }
+    }
+  }
+}
+```
+
 ### Claude Desktop
 
 Add to `~/Library/Application\ Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
@@ -107,10 +125,10 @@ Use `${workspaceFolder}` in the config. Each workspace resolves independently:
 
 No per-project configuration needed.
 
-### Claude Desktop — named server instances
+### Antigravity / Claude Desktop — named server instances
 
-`claude_desktop_config.json` is global, so register one entry per project with a unique name.
-Claude namespaces tools by server name, so the agent naturally calls the right one:
+Both use a global config file, so register one entry per project with a unique name.
+The agent namespaces tools by server name and naturally calls the right one:
 
 ```json
 {
@@ -129,7 +147,7 @@ Claude namespaces tools by server name, so the agent naturally calls the right o
 }
 ```
 
-Claude will see `sg-zerofeed` tools and `sg-other-project` tools as distinct namespaces.
+_(Antigravity: `~/.gemini/antigravity/mcp_config.json` — Claude Desktop: `~/Library/Application Support/Claude/claude_desktop_config.json`)_
 
 ### Shared / cross-repo graph
 
