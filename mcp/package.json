@@ -1,0 +1,26 @@
+{
+  "name": "@simplegraph/mcp-server",
+  "version": "0.1.0",
+  "description": "MCP server for simplegraph-agentic — exposes memory graph tools to AI agents",
+  "type": "module",
+  "bin": {
+    "simplegraph-mcp": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "node --loader ts-node/esm src/index.ts",
+    "start": "node dist/index.js",
+    "prepare": "npm run build"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.4.0"
+  }
+}

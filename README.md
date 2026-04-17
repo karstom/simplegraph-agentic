@@ -150,6 +150,28 @@ The generic adapter works with ChatGPT Projects, Gemini Gems, Windsurf, Aider, C
 
 ---
 
+## MCP Server (optional — for maximum reliability)
+
+The adapters above use context injection: the graph is pushed into the agent's context at session start. This works well but has two failure modes — the agent can skip loading if relevance scoring doesn't trigger, and it can forget the graph mid-task.
+
+The `mcp/` directory contains an MCP server that exposes the graph as **callable tools**, eliminating both failure modes:
+
+```
+simplegraph_index         — Get the routing table (call at session start)
+simplegraph_check_files   — Check files for known issues BEFORE editing
+simplegraph_anti_patterns — Get anti-patterns BEFORE generating code
+simplegraph_nodes         — Get all nodes in a category
+simplegraph_search        — Search across all nodes
+simplegraph_add_node      — Add a node (after a bug fix / decision)
+simplegraph_update_node   — Increment REGRESSED_N_TIMES when a bug recurs
+```
+
+See [`mcp/README.md`](mcp/README.md) for installation instructions (Claude Desktop, Cursor, VS Code).
+
+> **Recommended:** Use both — the adapter provides a session-start summary via context injection, and the MCP server handles mid-task safety checks and structured graph updates.
+
+---
+
 ## Graph Structure
 
 ```
