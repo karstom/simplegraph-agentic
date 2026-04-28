@@ -1,3 +1,4 @@
+<!-- simplegraph-memory-start -->
 # Memory Graph Instructions for Claude Code
 
 Add this section to your project's `CLAUDE.md` to enable persistent memory graph support.
@@ -64,3 +65,4 @@ Full protocol: `core/HOW_TO_UPDATE.md`
 
 If this is a multi-repo project and the index lists a shared graph path, call
 `simplegraph_index` — it merges both graphs automatically.
+<!-- simplegraph-memory-end -->
