@@ -1,174 +1,115 @@
 # simplegraph-agentic
 
-A lightweight, framework-agnostic **persistent memory graph** for AI coding assistants.
+A lightweight **persistent memory graph** for AI coding assistants.
 
-Your AI agent builds structured knowledge about your codebase — bugs that keep recurring, decisions that were deliberate, code areas that are dangerous — and retains it across sessions without bloating every context window. Works with Antigravity, Cursor, Claude Code, GitHub Copilot, and any tool that accepts custom instructions.
+Your agent accumulates structured knowledge about your codebase — recurring bugs, deliberate decisions, dangerous code areas — and carries it across sessions without bloating every context window. Works with Claude Code, Cursor, GitHub Copilot, Antigravity, and any tool that accepts custom instructions.
 
 ---
 
 ## The Problem
 
-Every AI coding session starts cold. The agent doesn't remember:
-- The bug you fixed three times that keeps coming back
-- The architectural decision that was intentional, not accidental
-- The code area where a subtle change broke production last month
-- The patterns your team agreed to never use
+Every AI coding session starts cold. The agent re-introduces the bug you fixed three times, undoes the architectural decision that was intentional, and generates the pattern your team banned. You re-explain the same context over and over — or worse, you don't, and it silently breaks things.
 
-You re-explain the same context, or worse — the agent confidently undoes a hard-won decision because it has no history.
+---
 
-## Why Not Just a README, Wiki, or CLAUDE.md?
+## How It Works
 
-**Flat docs load everything every time.** For non-trivial codebases this wastes context tokens and dilutes the signal. A 500-word CLAUDE.md that covers "coding style" gives the AI no actionable intelligence about *where* the real risks are.
+### Tiered loading — 16× fewer tokens at session start
 
-simplegraph-agentic takes a different approach:
+Measured on a production codebase with 62 nodes across 26 files:
 
-### Tiered Loading — 16× Fewer Tokens at Session Start
-
-Measured on a production codebase with **62 nodes** across 26 files (a complex full-stack PWA with identity, messaging, CDN caching, and compactor pipeline):
-
-| Approach | Tokens per session start | Tokens per task |
+| Approach | Session start | Per task |
 |---|---|---|
-| **simplegraph (tiered)** | **~600** | **~2,400** |
-| Monolith (flat file) | ~9,700 | ~9,700 |
-| No memory (re-explain each time) | 0 up front, ~500–2,000 per re-explanation | compounds |
+| **simplegraph (tiered)** | **~600 tokens** | **~2,400 tokens** |
+| Monolith (flat file) | ~9,700 tokens | ~9,700 tokens |
+| No memory | 0 up front, ~500–2,000 per re-explanation | compounds |
 
-**16× reduction** at session start. **4× reduction** for a typical task. The savings compound across every request in a session — the AI reads ~600 tokens once, then loads only the 2–3 files relevant to the current task.
+The agent reads ~600 tokens at session start (just the index), then loads only the 2–3 files relevant to the current task. Run `bash scripts/token_benchmark.sh` on your own graph to measure your reduction.
 
-Run `bash scripts/token_benchmark.sh` on your own graph to measure your reduction ratio.
+### Typed nodes and edges — follow risk chains
 
-### Compared to Other Approaches
-
-| Approach | Strengths | simplegraph advantage |
-|---|---|---|
-| **CLAUDE.md / .cursorrules** | Simple, zero setup | Flat files load everything every time. At 62 nodes of real knowledge, that's 9,700 tokens wasted per request. simplegraph loads ~600. |
-| **Aider repo-map** | Auto-generates structural map | Structural maps answer "where is X?" but not "what went wrong here?" or "why was this decision made?" simplegraph captures *intent and history*, not just *structure*. |
-| **Vector DB (Mem0, etc.)** | Scales to huge corpora, fuzzy retrieval | Requires infrastructure (DB server, embeddings). Retrieval is probabilistic — it might not surface the one invariant that prevents a regression. simplegraph is deterministic, git-native, and reviewable. |
-| **Fine-tuned models** | Encoded knowledge | Expensive, opaque, stale the moment code changes. simplegraph updates in the same commit as the code. |
-
-### Typed, Linked Nodes — Follow Risk Chains
-
-Nodes have types (**Component**, **Invariant**, **Regression**, **Decision**, **Watchlist**) and typed edges. An agent can follow a chain like:
+Nodes have types (**Component**, **Invariant**, **Regression**, **Decision**, **Watchlist**) and typed edges. An agent can follow:
 
 ```
 AUTH_SERVICE --VIOLATED_BY--> REG_TOKEN_LEAK (×3) --FIXED_BY--> DEC_ROTATE_ON_REFRESH
 ```
 
-This means: "the Auth service has a regression that's happened 3 times, and there's a deliberate architectural decision about how to prevent it." That chain tells the agent *exactly* what to be careful about and why — in 3 hops, not 500 words.
+That chain tells the agent exactly what to be careful about and why — in 3 hops.
 
-### Priority and Heat — Load Critical Context First
-
-Nodes carry a `Priority` field (HIGH / MEDIUM / LOW) derived from concrete signals:
+### Priority — load critical context first
 
 | Signal | Priority |
 |---|---|
-| `REGRESSED_N_TIMES >= 2` or on a Watchlist | **HIGH** |
+| `REGRESSED_N_TIMES >= 2` | **HIGH** |
 | `LastUpdated` within 14 days | **MEDIUM** |
 | Stable, no flags | **LOW** |
 
-When the routing table points to multiple files, the agent loads HIGH-priority nodes first. Low-priority nodes are skipped unless the task directly touches them.
+### Compared to alternatives
 
----
-
-## Benefits
-
-### For Individual Developers
-
-| Pain point | How simplegraph-agentic helps |
+| Approach | Limitation |
 |---|---|
-| Agent re-introduces a fixed bug | **Regression nodes** with `REGRESSED_N_TIMES` teach the agent which areas are fragile |
-| Agent refactors away a deliberate pattern | **Decision nodes** document the *why*, not just the *what* |
-| Agent generates code that violates team conventions | **Anti-patterns** file lists what the AI should never generate |
-| Agent wastes tokens reading irrelevant context | **Task routing table** directs loading to only relevant files |
-| Agent can't find where code lives | **Auto-map** (generated by `ctags`) gives structural awareness without manual docs |
-| Session starts cold every time | **Graph persists across sessions** — committed to git, always available |
-
-### For Teams
-
-| Pain point | How simplegraph-agentic helps |
-|---|---|
-| New team members repeat old mistakes | The graph captures **institutional knowledge** as typed, searchable nodes |
-| AI tools make different decisions for different devs | The graph is committed and shared — everyone's AI reads the same truth |
-| Multi-repo projects lose cross-boundary context | **Shared graph** captures API contracts, org-wide invariants, and cross-repo regressions |
-| Graph updates conflict in PRs | **One-file-per-component** + append-only convention = clean merges |
-| Large codebase overflows the index | **Hierarchical routing** (domain indexes) scales to any size |
+| **CLAUDE.md / .cursorrules** | Flat files load everything every time. 62 nodes = 9,700 tokens wasted per request. |
+| **Aider repo-map** | Answers "where is X?" but not "what went wrong?" or "why was this decided?" |
+| **Vector DB (Mem0, etc.)** | Requires infrastructure; retrieval is probabilistic — may miss the one invariant that blocks a regression. |
+| **Fine-tuned models** | Expensive, opaque, stale the moment code changes. |
 
 ---
 
 ## Quickstart
 
-### Using the installer (recommended)
-
 ```bash
 git clone https://github.com/karstom/simplegraph-agentic.git
-cd simplegraph-agentic
-bash setup.sh /path/to/your/project
+bash simplegraph-agentic/setup.sh /path/to/your/project
 ```
 
-The script will:
-1. Copy `core/` into your project (optionally `shared/` for multi-repo setups)
-2. Ask which AI tool you use and install the right adapter
-3. Run the consistency check
-4. Print next steps — including the seed prompt
+The installer copies `core/` into your project, installs the right adapter for your AI tool, and prints next steps including the seed prompt.
+
+**Already installed?** Re-run `setup.sh` on an existing project — it detects the existing graph and prompts you to upgrade in place (scripts and adapters refreshed, graph data untouched) or do a clean reinstall.
 
 ### Manual install
 
 1. Copy `core/` into your project root.
-2. Pick an adapter from `adapters/` — see the [Adapter Matrix](#adapter-matrix).
-3. Run the seed prompt in `scripts/seed_prompt.md` in your AI tool to bootstrap the graph.
+2. Pick an adapter from `adapters/` — see the [Adapter Matrix](#adapter-matrix) below.
+3. Run `scripts/seed_prompt.md` in your AI tool to bootstrap the graph.
 4. Commit `core/`.
 
-### Multi-Repo / Team Projects
+---
 
-For projects spanning multiple repos:
+## MCP Server (recommended for Claude Code)
 
-1. Copy `core/` into each individual repo for per-repo knowledge.
-2. Copy `shared/` into a dedicated org-memory repo or monorepo root for cross-repo knowledge.
-3. In each repo's `core/graph_index.md`, set the shared graph path.
-4. Configure `shared/auto_map_config.yaml` to list all repos for shared structural mapping.
+The `mcp/` directory exposes the graph as callable tools via the Model Context Protocol. This is more reliable than context injection alone — the agent actively calls tools rather than hoping it read a file at session start.
 
-See `shared/graph_index.md` for the full multi-repo setup guide.
+```
+simplegraph_index              — Routing table (call at session start)
+simplegraph_check_files        — Check files for known issues BEFORE editing
+simplegraph_anti_patterns      — Anti-patterns list BEFORE generating code
+simplegraph_nodes              — All nodes in a category
+simplegraph_search             — Keyword search across all nodes
+simplegraph_get_node           — Fetch a single node by exact ID
+simplegraph_add_node           — Add a node after a bug fix or decision
+simplegraph_update_index       — Add a new node to graph_index.md
+simplegraph_update_node        — Update a field; increment REGRESSED_N_TIMES
+simplegraph_archive_regression — Move a resolved regression to archive
+simplegraph_scratchpad         — Session notes not yet ready to commit as nodes
+```
+
+See [`mcp/README.md`](mcp/README.md) for installation (Claude Desktop, Cursor, VS Code, `.claude/settings.json`). The `setup.sh` Claude Code path can generate `.claude/settings.json` automatically.
+
+> **Best practice:** use both — the adapter gives a session-start summary via context injection; the MCP server handles mid-task safety checks and structured updates.
 
 ---
 
 ## Adapter Matrix
 
-| AI Tool | Adapter file | Install path |
+| AI Tool | Adapter | Install path |
 |---|---|---|
-| **Antigravity** | `adapters/antigravity/SKILL.md` | `.agent/skills/memory/SKILL.md` |
+| **Claude Code** | `adapters/claude-code/CLAUDE_MEMORY.md` | Appended to `CLAUDE.md` (setup.sh handles this) |
 | **Cursor** | `adapters/cursor/memory.mdc` | `.cursor/rules/memory.mdc` |
-| **Claude Code** | `adapters/claude-code/CLAUDE_MEMORY.md` | Paste section into `CLAUDE.md` |
-| **GitHub Copilot** | `adapters/copilot/copilot-instructions-memory.md` | Merge into `.github/copilot-instructions.md` |
+| **GitHub Copilot** | `adapters/copilot/copilot-instructions-memory.md` | `.github/copilot-instructions.md` |
+| **Antigravity** | `adapters/antigravity/SKILL.md` | `.agent/skills/memory/SKILL.md` |
 | **Generic** | `adapters/generic/AGENT_MEMORY.md` | Paste into custom instructions |
 
 The generic adapter works with ChatGPT Projects, Gemini Gems, Windsurf, Aider, Cline, or any tool that accepts a persistent system prompt.
-
-> **Antigravity tip — guaranteed loading:** Antigravity reads Knowledge Items (KIs) during its
-> boot sequence *before* relevance scoring. For zero-miss loading, copy your `core/graph_index.md`
-> into `.gemini/antigravity/knowledge/{your-project}/artifacts/graph_index.md` and add a
-> `metadata.json` alongside it. The agent will read it on every session regardless of task type.
-> See `CONTRIBUTING.md` for the full format.
-
----
-
-## MCP Server (optional — for maximum reliability)
-
-The adapters above use context injection: the graph is pushed into the agent's context at session start. This works well but has two failure modes — the agent can skip loading if relevance scoring doesn't trigger, and it can forget the graph mid-task.
-
-The `mcp/` directory contains an MCP server that exposes the graph as **callable tools**, eliminating both failure modes:
-
-```
-simplegraph_index         — Get the routing table (call at session start)
-simplegraph_check_files   — Check files for known issues BEFORE editing
-simplegraph_anti_patterns — Get anti-patterns BEFORE generating code
-simplegraph_nodes         — Get all nodes in a category
-simplegraph_search        — Search across all nodes
-simplegraph_add_node      — Add a node (after a bug fix / decision)
-simplegraph_update_node   — Increment REGRESSED_N_TIMES when a bug recurs
-```
-
-See [`mcp/README.md`](mcp/README.md) for installation instructions (Claude Desktop, Cursor, VS Code).
-
-> **Recommended:** Use both — the adapter provides a session-start summary via context injection, and the MCP server handles mid-task safety checks and structured graph updates.
 
 ---
 
@@ -176,42 +117,23 @@ See [`mcp/README.md`](mcp/README.md) for installation instructions (Claude Deskt
 
 ```
 core/
-├── graph_index.md          # Mandatory session-start read (~50 lines)
-├── anti_patterns.md        # What the AI should NEVER generate
-├── invariants.md           # Hard rules (e.g. "never call X without Y")
-├── regressions.md          # Bugs + REGRESSED_N_TIMES counters
-├── decisions.md            # Architectural choices with rationale
-├── watchlists.md           # Dangerous code areas + open issues
-├── HOW_TO_UPDATE.md        # When and how to update the graph
-├── components/             # One file per major service/module
+├── graph_index.md        # Mandatory session-start read (~50 lines)
+├── anti_patterns.md      # What the AI should NEVER generate
+├── invariants.md         # Hard rules ("never call X without Y")
+├── regressions.md        # Bugs + REGRESSED_N_TIMES counters
+├── decisions.md          # Architectural choices with rationale
+├── watchlists.md         # Dangerous code areas + open issues
+├── HOW_TO_UPDATE.md      # When and how to update the graph
+├── components/           # One file per major service/module
 ├── archive/
 │   └── resolved_regressions.md
-├── auto_map.md             # (generated, gitignored) structural repo map
-└── .scratchpad.md          # (gitignored) session-local AI notes
+├── auto_map.md           # (generated, gitignored) structural repo map
+└── .scratchpad.md        # (gitignored) session-local AI notes
 ```
 
-For multi-repo teams, a `shared/` directory adds:
-```
-shared/
-├── graph_index.md          # Cross-repo index + setup guide
-├── auto_map_config.yaml    # Repos to include in shared auto-map
-├── invariants.md           # API contracts, org-wide rules
-├── regressions.md          # Cross-repo bugs
-├── decisions.md            # Platform-level architectural choices
-└── watchlists.md           # Integration boundaries
-```
+For multi-repo teams, a `shared/` directory adds cross-repo invariants, decisions, and an org-level index. See `shared/graph_index.md`.
 
-### Node Types
-
-| Type | Purpose | Priority signal |
-|---|---|---|
-| **Component** | A service, module, or subsystem | — |
-| **Invariant** | A hard rule that must never be violated | HIGH if has VIOLATED_BY edge |
-| **Regression** | A bug that has occurred — especially recurring ones | HIGH if REGRESSED_N_TIMES ≥ 2 |
-| **Decision** | An intentional architectural choice with documented rationale | — |
-| **Watchlist** | A dangerous code area requiring extra caution | HIGH by definition |
-
-### Edge Types
+### Edge types
 
 | Edge | Meaning |
 |---|---|
@@ -224,119 +146,30 @@ shared/
 
 ---
 
-## Scripts
-
-| Script | Purpose |
-|---|---|
-| `setup.sh` | Interactive installer — copies scaffold + adapter into your project |
-| `scripts/auto_map.sh` | Generates structural repo map from ctags (requires Universal Ctags) |
-| `scripts/auto_map_shared.sh` | Generates combined public API map across multiple repos |
-| `scripts/consistency_check.sh` | Verifies no broken edge references in the graph |
-| `scripts/stale_check.sh` | Flags nodes with old dates or dead file references |
-| `scripts/token_benchmark.sh` | Measures token efficiency — compare tiered vs monolith |
-| `scripts/seed_prompt.md` | One-shot prompt to bootstrap the graph from a cold start |
-
----
-
 ## Keeping the Graph Fresh
 
-The graph only stays useful if it's updated when code changes. Relying on discipline alone doesn't work — for agents or humans. The three maintenance tasks need different trigger strategies:
+The graph only stays useful if it's updated when code changes.
 
-| Task | Why it drifts | Right mechanism |
-|---|---|---|
-| **Edge consistency** (`consistency_check.sh`) | Nodes renamed/deleted without updating edges | **CI required status check** — enforced on every PR |
-| **Structural map** (`auto_map.sh`) | New files added without regenerating the map | **Git pre-commit hook** — automatic, local |
-| **Graph node updates** (regressions, decisions, etc.) | Semantic judgment the agent skips under time pressure | **SDLC workflow file** — anchor it to a step the agent already follows |
+| Task | Mechanism |
+|---|---|
+| **Edge consistency** (`consistency_check.sh`) | CI required status check — enforced on every PR |
+| **Structural map** (`auto_map.sh`) | Git pre-commit hook — automatic, local |
+| **Node updates** (regressions, decisions, etc.) | Anchor to a merge checklist the agent already follows |
 
-### Layer 1 — Consistency Check via GitHub Actions
-
-The only fully enforceable layer. Pure bash, no dependencies, runs in under a second. Add it as a required branch protection check so broken edges can never merge.
+**CI check** — add as a required branch protection rule so broken edges can never merge:
 
 ```yaml
 # .github/workflows/graph-check.yml
-name: Graph Consistency
-
-on:
-  pull_request:
-  push:
-    branches: [main]
-
+on: [pull_request]
 jobs:
   graph-check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Check graph edge consistency
-        run: bash core/scripts/consistency_check.sh
+      - run: bash core/scripts/consistency_check.sh
 ```
 
-Then in **GitHub → Settings → Branches → Branch protection rules for `main`**: enable "Require status checks to pass" and add `graph-check` as a required check.
-
-### Layer 2 — Auto-Map via Git Pre-Commit Hook
-
-`auto_map.sh` output is gitignored (it's a local working artifact, not committed state), so CI can't enforce it. A pre-commit hook keeps it fresh automatically.
-
-```bash
-# Add to .git/hooks/pre-commit, then: chmod +x .git/hooks/pre-commit
-#!/usr/bin/env bash
-if command -v ctags &>/dev/null; then
-  bash core/scripts/auto_map.sh . 2>/dev/null || true
-fi
-```
-
-For teams using [pre-commit](https://pre-commit.com/), distribute it via `.pre-commit-config.yaml`:
-
-```yaml
-repos:
-  - repo: local
-    hooks:
-      - id: auto-map
-        name: Regenerate simplegraph auto_map
-        language: system
-        entry: bash core/scripts/auto_map.sh .
-        pass_filenames: false
-        always_run: true
-```
-
-### Layer 3 — Graph Node Updates via an SDLC Workflow File
-
-Node updates (regressions, decisions, watchlists) require judgment — they can't be automated. The most reliable approach is to embed the instruction in a workflow file the agent is **already required to follow** at a merge or promotion checkpoint. Create a project-specific file at whatever path your AI adapter reads (e.g. `.agent/workflows/promote.md`, a section in `CONTRIBUTING.md`, or custom instructions) with a checklist like:
-
-```markdown
-## Before merging — update the memory graph
-
-For every significant change in this PR, check whether any graph nodes need updating.
-
-Run in order:
-1. bash core/scripts/consistency_check.sh
-2. bash core/scripts/auto_map.sh
-
-| What changed | Graph action |
-|---|---|
-| New service / module | Add Component node in `components/{NAME}.md` |
-| Bug introduced and fixed | Add/update Regression node in `regressions.md` |
-| Architectural decision made | Add Decision node in `decisions.md` |
-| Hard invariant discovered | Add Invariant node in `invariants.md` |
-| Dangerous code area found | Add/update Watchlist node in `watchlists.md` |
-
-Commit any graph changes before merging.
-```
-
-The key is anchoring the update to a step the agent already executes, rather than relying on it happening spontaneously.
-
----
-
-## How the Graph Grows
-
-You don't build the graph all at once. It accumulates naturally:
-
-1. **Day 1:** Run the seed prompt → AI generates initial Component and Decision nodes
-2. **Week 1:** Fix a bug → add a Regression node in the same commit
-3. **Week 2:** Discover a dangerous pattern → add a Watchlist entry
-4. **Month 1:** Notice a bug keeps recurring → `REGRESSED_N_TIMES` increments, AI automatically treats it as high-risk
-5. **Ongoing:** Review the stale check periodically → clean up nodes that no longer apply
-
-The graph is a living document. Low quality at seed time is fine — it improves through real usage.
+**Node updates** grow naturally: fix a bug → add a Regression node in the same commit. Notice a bug recurs → call `simplegraph_update_node` to increment `REGRESSED_N_TIMES`. The graph improves through real usage — low quality at seed time is fine.
 
 ---
 
@@ -344,29 +177,33 @@ The graph is a living document. Low quality at seed time is fine — it improves
 
 | Project size | Strategy |
 |---|---|
-| **Solo / small project (<10 components)** | Single `graph_index.md` with flat routing table |
-| **Medium project (10-30 components)** | Same, but consider splitting multi-node files (per-node files) if merge conflicts increase |
-| **Large project (30+ components)** | [Hierarchical routing](core/HOW_TO_UPDATE.md#scaling-hierarchical-routing): domain-level indexes |
-| **Multi-repo / microservices** | Per-repo `core/` + shared org-level graph |
+| **<10 components** | Single `graph_index.md` with flat routing table |
+| **10–30 components** | Same; split multi-node files if merge conflicts increase |
+| **30+ components** | Hierarchical routing: domain-level indexes |
+| **Multi-repo** | Per-repo `core/` + shared org-level graph |
 
 ---
 
 ## Design Principles
 
-1. **Zero infrastructure.** No databases, no servers, no build steps. Plain markdown + git.
-2. **Opinionated about staying small.** 5 high-signal nodes beat 50 shallow ones.
+1. **Zero infrastructure.** No databases, no servers. Plain markdown + git.
+2. **Stay small.** 5 high-signal nodes beat 50 shallow ones.
 3. **AI writes the graph alongside the code.** Graph updates go in the same commit as the fix.
-4. **Tiered loading.** The agent reads 50 lines at session start, not 5,000.
-5. **Git-native.** The graph is committed, versioned, branched, and reviewed like code.
+4. **Tiered loading.** The agent reads ~50 lines at session start, not 5,000.
+5. **Git-native.** Committed, versioned, branched, and reviewed like code.
 
 ---
 
-## Compatibility
+## Scripts
 
-- **Any language, any framework** — the graph is plain markdown.
-- **Any AI tool** — adapters are the only tool-specific piece.
-- **Git-friendly** — commit the `core/` directory; the whole team shares the same memory.
-- **No dependencies** — bash scripts for optional checks (ctags for auto-map).
+| Script | Purpose |
+|---|---|
+| `setup.sh` | Interactive installer and upgrader |
+| `scripts/seed_prompt.md` | One-shot prompt to bootstrap the graph from cold |
+| `scripts/consistency_check.sh` | Verify no broken edge references |
+| `scripts/stale_check.sh` | Flag nodes with old dates or dead file references |
+| `scripts/auto_map.sh` | Generate structural repo map (requires Universal Ctags) |
+| `scripts/token_benchmark.sh` | Measure token efficiency vs a flat file |
 
 ---
 
