@@ -14,17 +14,17 @@ Every AI coding session starts cold. The agent re-introduces the bug you fixed t
 
 ## How It Works
 
-### Tiered loading — 16× fewer tokens at session start
+### Tiered loading — 29× fewer tokens at session start
 
-Measured on a production codebase with 62 nodes across 26 files:
+Measured on a production codebase with 31 graph files:
 
 | Approach | Session start | Per task |
 |---|---|---|
-| **simplegraph (tiered)** | **~600 tokens** | **~2,400 tokens** |
-| Monolith (flat file) | ~9,700 tokens | ~9,700 tokens |
+| **simplegraph (tiered)** | **~862 tokens** | **~4,300 tokens** |
+| Monolith (flat file) | ~25,400 tokens | ~25,400 tokens |
 | No memory | 0 up front, ~500–2,000 per re-explanation | compounds |
 
-The agent reads ~600 tokens at session start (just the index), then loads only the 2–3 files relevant to the current task. Run `bash scripts/token_benchmark.sh` on your own graph to measure your reduction.
+**29× reduction** at session start. **5× reduction** for a typical task. The savings compound across every request in a session — the agent reads ~862 tokens once, then loads only the 2–3 files relevant to the current task. Run `bash scripts/token_benchmark.sh` on your own graph to measure your numbers.
 
 ### Typed nodes and edges — follow risk chains
 
@@ -48,7 +48,7 @@ That chain tells the agent exactly what to be careful about and why — in 3 hop
 
 | Approach | Limitation |
 |---|---|
-| **CLAUDE.md / .cursorrules** | Flat files load everything every time. 62 nodes = 9,700 tokens wasted per request. |
+| **CLAUDE.md / .cursorrules** | Flat files load everything every time. 31 graph files = ~25,400 tokens wasted per request. |
 | **Aider repo-map** | Answers "where is X?" but not "what went wrong?" or "why was this decided?" |
 | **Vector DB (Mem0, etc.)** | Requires infrastructure; retrieval is probabilistic — may miss the one invariant that blocks a regression. |
 | **Fine-tuned models** | Expensive, opaque, stale the moment code changes. |
