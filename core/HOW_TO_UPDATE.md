@@ -32,6 +32,7 @@ Every node follows this exact format:
 **Priority:** HIGH | MEDIUM | LOW
 **Label:** Human-readable name
 **Summary:** 2–4 sentences. What this is, why it matters, what went wrong (for regressions).
+**Tags:** comma-separated, lowercase, e.g. auth, token, session
 **Edges:**
 - EDGE_TYPE → OTHER_NODE_ID: brief explanation of the relationship
 **Files:** `src/path/to/your/file.ts`, `src/path/to/other.py`
@@ -42,6 +43,16 @@ For Regression nodes, add:
 ```
 **REGRESSED_N_TIMES:** 1
 ```
+
+### Tags
+
+Tags enable similarity-style search across nodes that don't share explicit edge relationships. Use `simplegraph_search` with a tag name to find all semantically related nodes across the graph.
+
+**Conventions:**
+- Lowercase, hyphenated: `auth`, `token-refresh`, `mobile-nav`
+- Reflect your project's own domain language — don't use generic CS terms
+- 2–5 tags per node; more than that is a sign the node should be split
+- Tags are optional but add high value on nodes that share a concern without a direct edge
 
 ### Priority / Heat Rules
 

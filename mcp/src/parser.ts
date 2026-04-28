@@ -7,6 +7,7 @@ export interface GraphNode {
   priority: string;
   label: string;
   summary: string;
+  tags: string[];
   regressedNTimes?: number;
   edges: string[];
   files: string[];
@@ -36,6 +37,12 @@ export function parseNodes(content: string, sourceFile: string): GraphNode[] {
     const filesStr = get("Files");
     const files = (filesStr.match(/`[^`]+`/g) ?? []).map(f => f.slice(1, -1));
 
+    // Tags: comma-separated plain text; filter placeholder
+    const tagsStr = get("Tags");
+    const tags = tagsStr && tagsStr !== "_(none)_"
+      ? tagsStr.split(",").map(t => t.trim()).filter(Boolean)
+      : [];
+
     const regressedMatch = section.match(/\*\*REGRESSED_N_TIMES:\*\*\s*(\d+)/);
 
     return [{
@@ -44,6 +51,7 @@ export function parseNodes(content: string, sourceFile: string): GraphNode[] {
       priority: get("Priority"),
       label: get("Label"),
       summary: get("Summary"),
+      tags,
       regressedNTimes: regressedMatch ? parseInt(regressedMatch[1], 10) : undefined,
       edges,
       files,
@@ -64,6 +72,7 @@ export function formatNode(
     `**Priority:** ${node.priority}`,
     `**Label:** ${node.label}`,
     `**Summary:** ${node.summary}`,
+    `**Tags:** ${node.tags.length > 0 ? node.tags.join(", ") : "_(none)_"}`,
   ];
   if (node.regressedNTimes !== undefined) {
     lines.push(`**REGRESSED_N_TIMES:** ${node.regressedNTimes}`);
