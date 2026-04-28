@@ -111,6 +111,8 @@ function summarizeNodes(nodes: GraphNode[]): string {
       `**Label:** ${n.label}`,
       `**Summary:** ${n.summary}`,
     ];
+    if (n.tags.length)
+      lines.push(`**Tags:** ${n.tags.join(", ")}`);
     if (n.regressedNTimes !== undefined)
       lines.push(`**REGRESSED_N_TIMES:** ${n.regressedNTimes}`);
     if (n.edges.length)
@@ -210,6 +212,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           label:           { type: "string", description: "Short human-readable label" },
           summary:         { type: "string", description: "2-4 sentences: what happened, why it matters, how it was fixed" },
           priority:        { type: "string", enum: ["HIGH", "MEDIUM", "LOW"] },
+          tags:            { type: "array", items: { type: "string" }, description: "Lowercase tags for similarity search, e.g. ['auth', 'token', 'session']" },
           files:           { type: "array", items: { type: "string" }, description: "Affected file paths" },
           edges:           { type: "array", items: { type: "string" }, description: "Edge strings: 'VIOLATED_BY → INV_X: explanation'" },
           regressedNTimes: { type: "number", description: "For Regression nodes: how many times this has occurred" },
@@ -228,7 +231,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           id:    { type: "string", description: "Node ID to update" },
           field: {
             type: "string",
-            enum: ["Summary", "Priority", "LastUpdated", "REGRESSED_N_TIMES", "Files"],
+            enum: ["Summary", "Priority", "Tags", "LastUpdated", "REGRESSED_N_TIMES", "Files"],
             description: "Field to update",
           },
           value: {
@@ -383,7 +386,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const { query } = args as { query: string };
         const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
         const hits = getAllNodes().filter(n => {
-          const haystack = [n.id, n.label, n.summary, ...n.files, ...n.edges].join(" ").toLowerCase();
+          const haystack = [n.id, n.label, n.summary, ...n.tags, ...n.files, ...n.edges].join(" ").toLowerCase();
           return terms.every(t => haystack.includes(t));
         });
         if (!hits.length) return ok(`No nodes found matching "${query}".`);
@@ -393,10 +396,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "simplegraph_add_node": {
         const {
           type, id, label, summary, priority,
-          files = [], edges = [], regressedNTimes,
+          tags = [], files = [], edges = [], regressedNTimes,
         } = args as {
           type: string; id: string; label: string; summary: string;
-          priority: string; files?: string[]; edges?: string[];
+          priority: string; tags?: string[]; files?: string[]; edges?: string[];
           regressedNTimes?: number;
         };
 
@@ -416,7 +419,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
 
         const today = new Date().toISOString().slice(0, 10);
-        const nodeText = formatNode({ id, type, priority, label, summary, files, edges, lastUpdated: today, regressedNTimes });
+        const nodeText = formatNode({ id, type, priority, label, summary, tags, files, edges, lastUpdated: today, regressedNTimes });
         const targetFile = targetFileForType(type, id);
         const existing_content = readGraphFile(targetFile);
 
@@ -525,7 +528,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
         const archiveBlock = formatNode({
           id: node.id, type: node.type, priority: node.priority,
-          label: node.label, summary: updatedSummary,
+          label: node.label, summary: updatedSummary, tags: node.tags,
           files: node.files, edges: node.edges,
           lastUpdated: today, regressedNTimes: node.regressedNTimes,
         });
