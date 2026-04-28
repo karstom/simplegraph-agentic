@@ -239,6 +239,66 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ["id", "field", "value"],
       },
     },
+    {
+      name: "simplegraph_get_node",
+      description:
+        "Fetch a single node by its exact ID. Returns the full raw node record. " +
+        "Use this when you know the exact ID; use simplegraph_search for keyword lookups.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          id: { type: "string", description: "Exact node ID (UPPER_SNAKE_CASE)" },
+        },
+        required: ["id"],
+      },
+    },
+    {
+      name: "simplegraph_scratchpad",
+      description:
+        "Read, append to, or clear the session scratchpad (.scratchpad.md). " +
+        "The scratchpad is gitignored — use it for mid-session notes not yet ready to commit as nodes.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            enum: ["read", "append", "clear"],
+            description: "read: get contents; append: add text; clear: empty the scratchpad",
+          },
+          text: { type: "string", description: "Text to append (required for action='append')" },
+        },
+        required: ["action"],
+      },
+    },
+    {
+      name: "simplegraph_archive_regression",
+      description:
+        "Move a resolved Regression node from regressions.md to archive/resolved_regressions.md. " +
+        "Call this when a bug has been permanently fixed.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          id:         { type: "string", description: "Regression node ID to archive" },
+          resolution: { type: "string", description: "One sentence describing how it was resolved (appended to summary)" },
+        },
+        required: ["id"],
+      },
+    },
+    {
+      name: "simplegraph_update_index",
+      description:
+        "Add a node to the graph_index.md Quick Index table. Call this immediately after " +
+        "simplegraph_add_node to keep the index current.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          id:   { type: "string", description: "Node ID to add (UPPER_SNAKE_CASE)" },
+          type: { type: "string", enum: ["Component", "Invariant", "Regression", "Decision", "Watchlist"] },
+          file: { type: "string", description: "Relative path to the node's file, e.g. components/AUTH.md or regressions.md" },
+        },
+        required: ["id", "type", "file"],
+      },
+    },
   ],
 }));
 
@@ -274,16 +334,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           const nodes = getAllNodes().filter(n => n.type.toLowerCase() === "component");
           return ok(nodes.length ? summarizeNodes(nodes) : "No component nodes found.");
         }
-        const fileMap: Record<string, string> = {
-          regressions: "regressions.md",
-          invariants:  "invariants.md",
-          decisions:   "decisions.md",
-          watchlists:  "watchlists.md",
+        const typeMap: Record<string, string> = {
+          regressions: "regression",
+          invariants:  "invariant",
+          decisions:   "decision",
+          watchlists:  "watchlist",
         };
-        const file = fileMap[category];
-        if (!file) return fail(`Unknown category: ${category}`);
-        const nodes = parseNodes(readGraphFile(file), file);
-        return ok(nodes.length ? summarizeNodes(nodes) : `No nodes found in ${file}.`);
+        const typeName = typeMap[category];
+        if (!typeName) return fail(`Unknown category: ${category}`);
+        const nodes = getAllNodes().filter(n => n.type.toLowerCase() === typeName);
+        return ok(nodes.length ? summarizeNodes(nodes) : `No nodes found for category: ${category}.`);
       }
 
       case "simplegraph_check_files": {
@@ -294,13 +354,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const hits = allNodes.filter(node =>
           node.files.some(nodeFile =>
             files.some(target => {
-              const nBase = path.basename(nodeFile).toLowerCase();
-              const tBase = path.basename(target).toLowerCase();
-              return (
-                nodeFile.includes(target) ||
-                target.includes(nodeFile) ||
-                nBase === tBase
-              );
+              const n = nodeFile.replace(/\\/g, "/").toLowerCase();
+              const t = target.replace(/\\/g, "/").toLowerCase();
+              return n.includes(t) || t.includes(n);
             })
           )
         );
@@ -325,14 +381,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "simplegraph_search": {
         const { query } = args as { query: string };
-        const q = query.toLowerCase();
-        const hits = getAllNodes().filter(n =>
-          n.id.toLowerCase().includes(q) ||
-          n.label.toLowerCase().includes(q) ||
-          n.summary.toLowerCase().includes(q) ||
-          n.files.some(f => f.toLowerCase().includes(q)) ||
-          n.edges.some(e => e.toLowerCase().includes(q))
-        );
+        const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+        const hits = getAllNodes().filter(n => {
+          const haystack = [n.id, n.label, n.summary, ...n.files, ...n.edges].join(" ").toLowerCase();
+          return terms.every(t => haystack.includes(t));
+        });
         if (!hits.length) return ok(`No nodes found matching "${query}".`);
         return ok(`Found ${hits.length} node(s) matching "${query}":\n\n${summarizeNodes(hits)}`);
       }
@@ -351,6 +404,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const existing = getAllNodes().find(n => n.id === id);
         if (existing) return fail(`Node ${id} already exists in ${existing.sourceFile}. Use simplegraph_update_node instead.`);
 
+        // Validate edge targets reference existing nodes
+        if (edges.length > 0) {
+          const knownIds = new Set(getAllNodes().map(n => n.id));
+          const broken = edges.flatMap(e => {
+            const m = e.match(/→\s*([A-Z][A-Z0-9_]*)/);
+            return m && !knownIds.has(m[1]) ? [m[1]] : [];
+          });
+          if (broken.length > 0)
+            return fail(`Edge target(s) not found: ${broken.join(", ")}. Create those nodes first or check IDs with simplegraph_search.`);
+        }
+
         const today = new Date().toISOString().slice(0, 10);
         const nodeText = formatNode({ id, type, priority, label, summary, files, edges, lastUpdated: today, regressedNTimes });
         const targetFile = targetFileForType(type, id);
@@ -366,7 +430,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return ok(
           `✓ Added NODE: ${id} to ${targetFile}.\n\n` +
           `Next steps:\n` +
-          `1. Update graph_index.md to include ${id} in the Quick Index.\n` +
+          `1. Call simplegraph_update_index({id:"${id}", type:"${type}", file:"${targetFile}"}) to add it to graph_index.md.\n` +
           `2. Run bash core/scripts/consistency_check.sh to verify no broken edges.\n` +
           `3. Commit both the code change and the graph update together.`
         );
@@ -379,6 +443,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const node = allNodes.find(n => n.id === id);
         if (!node) return fail(`Node ${id} not found. Use simplegraph_search to find it.`);
 
+        const isShared = node.sourceFile.startsWith("[shared]");
+        if (isShared) return fail(`Node ${id} is in the shared read-only graph. Update it in its source repo.`);
         const filePath = path.join(GRAPH_ROOT, node.sourceFile);
         let content = fs.readFileSync(filePath, "utf-8");
 
@@ -411,6 +477,118 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         content = content.replace(fieldPattern, `$1${resolvedValue}`);
         fs.writeFileSync(filePath, content);
         return ok(`✓ Updated **${field}** for NODE: ${id} → "${resolvedValue}" in ${node.sourceFile}.`);
+      }
+
+      case "simplegraph_get_node": {
+        const { id } = args as { id: string };
+        const node = getAllNodes().find(n => n.id === id);
+        if (!node) return fail(`Node ${id} not found. Use simplegraph_search to find it.`);
+        return ok(node.rawContent.trim());
+      }
+
+      case "simplegraph_scratchpad": {
+        const { action, text } = args as { action: string; text?: string };
+        const scratchFile = ".scratchpad.md";
+        if (action === "read") {
+          const content = readGraphFile(scratchFile);
+          return ok(content || "_(scratchpad is empty)_");
+        }
+        if (action === "append") {
+          if (!text) return fail("text is required for action='append'.");
+          const existing = readGraphFile(scratchFile);
+          const ts = new Date().toISOString().slice(0, 16).replace("T", " ");
+          writeGraphFile(scratchFile, `${existing}${existing ? "\n" : ""}<!-- ${ts} -->\n${text}\n`);
+          return ok("✓ Appended to scratchpad.");
+        }
+        if (action === "clear") {
+          writeGraphFile(scratchFile, "");
+          return ok("✓ Scratchpad cleared.");
+        }
+        return fail(`Unknown action: ${action}. Use 'read', 'append', or 'clear'.`);
+      }
+
+      case "simplegraph_archive_regression": {
+        const { id, resolution } = args as { id: string; resolution?: string };
+        const regrContent = readGraphFile("regressions.md");
+        if (!regrContent) return fail("regressions.md not found.");
+
+        const nodes = parseNodes(regrContent, "regressions.md");
+        const node = nodes.find(n => n.id === id);
+        if (!node) return fail(`Node ${id} not found in regressions.md.`);
+        if (node.type.toLowerCase() !== "regression")
+          return fail(`Node ${id} is type "${node.type}", not Regression.`);
+
+        const today = new Date().toISOString().slice(0, 10);
+        const updatedSummary = resolution
+          ? `${node.summary.replace(/\.*$/, "")}. Resolved: ${resolution}`
+          : node.summary;
+
+        const archiveBlock = formatNode({
+          id: node.id, type: node.type, priority: node.priority,
+          label: node.label, summary: updatedSummary,
+          files: node.files, edges: node.edges,
+          lastUpdated: today, regressedNTimes: node.regressedNTimes,
+        });
+
+        // Remove node block from regressions.md; rawContent includes trailing --- if not last node
+        let newRegressions = regrContent.replace(node.rawContent, "");
+        newRegressions = newRegressions.replace(/\n\n---\s*$/, ""); // trailing separator
+        newRegressions = newRegressions.replace(/^---\s*\n+/, "");  // leading separator
+        const trimmed = newRegressions.trim();
+        writeGraphFile("regressions.md", trimmed ? trimmed + "\n" : "");
+
+        const archiveContent = readGraphFile("archive/resolved_regressions.md");
+        writeGraphFile(
+          "archive/resolved_regressions.md",
+          archiveContent
+            ? `${archiveContent.trimEnd()}\n\n---\n\n${archiveBlock}\n`
+            : `${archiveBlock}\n`
+        );
+
+        return ok(
+          `✓ Archived NODE: ${id} → archive/resolved_regressions.md.\n\n` +
+          `Next steps:\n` +
+          `1. Remove ${id} from the Active Regressions row in graph_index.md.\n` +
+          `2. Commit the archive alongside your fix.`
+        );
+      }
+
+      case "simplegraph_update_index": {
+        const { id, type, file } = args as { id: string; type: string; file: string };
+        let content = readGraphFile("graph_index.md");
+        if (!content) return fail("graph_index.md not found.");
+
+        const categoryMap: Record<string, string> = {
+          "Component":  "Components",
+          "Invariant":  "Invariants",
+          "Regression": "Active Regressions",
+          "Decision":   "Decisions",
+          "Watchlist":  "Watchlists & Open Issues",
+        };
+        const rowLabel = categoryMap[type];
+        if (!rowLabel) return fail(`Unknown node type: ${type}`);
+
+        // Match the Quick Index table row for this category
+        const rowPattern = new RegExp(
+          `(\\|\\s*\\*\\*${rowLabel}\\*\\*\\s*\\|)([^|]*)(\\|[^|]*\\|)`,
+          "i"
+        );
+        if (!rowPattern.test(content)) {
+          return fail(
+            `Could not find "**${rowLabel}**" row in graph_index.md.\n` +
+            `Add this row manually:\n| **${rowLabel}** | ${id} | \`${file}\` |`
+          );
+        }
+
+        content = content.replace(rowPattern, (_, prefix, nodeCol, suffix) => {
+          // Strip placeholder italic text like _(add your ... here)_
+          const cleaned = nodeCol.replace(/_\([^)]*\)_/g, "").trim();
+          const updated = cleaned ? ` ${cleaned}, ${id} ` : ` ${id} `;
+          return `${prefix}${updated}${suffix}`;
+        });
+
+        writeGraphFile("graph_index.md", content);
+        return ok(`✓ Added ${id} to the "${rowLabel}" row in graph_index.md.`);
       }
 
       default:
