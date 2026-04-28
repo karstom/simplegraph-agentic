@@ -21,50 +21,111 @@ ok()   { echo "${green}✓ $*${reset}"; }
 warn() { echo "${yellow}! $*${reset}"; }
 ask()  { printf "%s" "${bold}$* ${reset}"; }
 
+# Replace the <!-- simplegraph-memory-start/end --> block in a file with new content,
+# or append if the markers are not present. Falls back to plain append without python3.
+update_adapter_section() {
+  local target_file="$1"
+  local source_file="$2"
+  if grep -q "simplegraph-memory-start" "${target_file}" 2>/dev/null && command -v python3 &>/dev/null; then
+    python3 - "${target_file}" "${source_file}" <<'PYEOF'
+import sys, re
+target, source = sys.argv[1], sys.argv[2]
+content = open(target).read()
+new_section = open(source).read().strip()
+pattern = r'<!-- simplegraph-memory-start -->.*?<!-- simplegraph-memory-end -->'
+result = re.sub(pattern, new_section, content, flags=re.DOTALL)
+open(target, 'w').write(result)
+PYEOF
+  else
+    echo "" >> "${target_file}"
+    cat "${source_file}" >> "${target_file}"
+  fi
+}
+
 echo ""
 echo "${bold}simplegraph-agentic setup${reset}"
 echo "────────────────────────────────────"
 echo "Target directory: ${TARGET}"
 echo ""
 
-# ── guard: already installed ───────────────────────────────────────────────────
+# ── detect existing install ────────────────────────────────────────────────────
+UPGRADE_MODE=false
+
 if [ -d "${TARGET}/core" ] && [ -f "${TARGET}/core/graph_index.md" ]; then
-  warn "core/ already exists in ${TARGET}."
-  ask "Overwrite? [y/N]"
-  read -r overwrite
-  if [[ ! "${overwrite}" =~ ^[Yy]$ ]]; then
-    echo "Aborted."
-    exit 0
-  fi
+  NODE_COUNT=$(grep -rl "^## NODE:" "${TARGET}/core/" 2>/dev/null | xargs grep -h "^## NODE:" 2>/dev/null | wc -l | tr -d ' ')
+  warn "Existing graph detected at ${TARGET}/core/ (${NODE_COUNT} node(s))."
+  echo ""
+  echo "${bold}What would you like to do?${reset}"
+  echo "  1) Upgrade in place  — keep your graph data, refresh scripts and adapters"
+  echo "  2) Clean reinstall   — wipe all graph data and start fresh  ${yellow}[destructive]${reset}"
+  echo "  3) Abort"
+  echo ""
+  ask "Choice [1-3]:"
+  read -r install_choice
+
+  case "${install_choice}" in
+    1)
+      UPGRADE_MODE=true
+      say "Upgrading in place — graph data will not be touched."
+      ;;
+    2)
+      echo ""
+      warn "This will permanently delete all your graph nodes."
+      ask "Type 'yes' to confirm:"
+      read -r confirm
+      if [ "${confirm}" != "yes" ]; then
+        echo "Aborted."
+        exit 0
+      fi
+      ;;
+    *)
+      echo "Aborted."
+      exit 0
+      ;;
+  esac
 fi
 
-# ── copy core scaffold ─────────────────────────────────────────────────────────
-say "Copying core/ scaffold..."
-cp -r "${SCRIPT_DIR}/core" "${TARGET}/core"
-# Install maintenance scripts into core/scripts/ (co-located with the graph)
+# ── copy core scaffold (fresh install only) ────────────────────────────────────
+if [ "${UPGRADE_MODE}" = false ]; then
+  say "Copying core/ scaffold..."
+  cp -r "${SCRIPT_DIR}/core" "${TARGET}/core"
+fi
+
+# Always refresh maintenance scripts — they're tooling, not graph data
 mkdir -p "${TARGET}/core/scripts"
 for script in consistency_check.sh stale_check.sh auto_map.sh auto_map_shared.sh token_benchmark.sh; do
   [ -f "${SCRIPT_DIR}/scripts/${script}" ] && cp "${SCRIPT_DIR}/scripts/${script}" "${TARGET}/core/scripts/${script}"
 done
 chmod +x "${TARGET}/core/scripts/"*.sh 2>/dev/null || true
-ok "core/ installed at ${TARGET}/core/ (including core/scripts/)"
 
-# ── multi-repo ─────────────────────────────────────────────────────────────────
-echo ""
-ask "Is this part of a multi-repo / team project? [y/N]"
-read -r multirepo
-if [[ "${multirepo}" =~ ^[Yy]$ ]]; then
-  say "Copying shared/ scaffold..."
-  cp -r "${SCRIPT_DIR}/shared" "${TARGET}/shared"
-  ok "shared/ installed at ${TARGET}/shared/"
+if [ "${UPGRADE_MODE}" = false ]; then
+  ok "core/ installed at ${TARGET}/core/ (including core/scripts/)"
+else
+  ok "Maintenance scripts refreshed at ${TARGET}/core/scripts/"
+fi
+
+# ── multi-repo (fresh install only) ───────────────────────────────────────────
+if [ "${UPGRADE_MODE}" = false ]; then
   echo ""
-  warn "Next: set the shared graph path in ${TARGET}/core/graph_index.md"
-  warn "      (e.g., ../org-memory/core/graph_index.md)"
+  ask "Is this part of a multi-repo / team project? [y/N]"
+  read -r multirepo
+  if [[ "${multirepo}" =~ ^[Yy]$ ]]; then
+    say "Copying shared/ scaffold..."
+    cp -r "${SCRIPT_DIR}/shared" "${TARGET}/shared"
+    ok "shared/ installed at ${TARGET}/shared/"
+    echo ""
+    warn "Next: set the shared graph path in ${TARGET}/core/graph_index.md"
+    warn "      (e.g., ../org-memory/core/graph_index.md)"
+  fi
 fi
 
 # ── adapter ───────────────────────────────────────────────────────────────────
 echo ""
-echo "${bold}Which AI tool are you using?${reset}"
+if [ "${UPGRADE_MODE}" = true ]; then
+  echo "${bold}Which AI tool adapter would you like to update?${reset}"
+else
+  echo "${bold}Which AI tool are you using?${reset}"
+fi
 echo "  1) Antigravity"
 echo "  2) Cursor"
 echo "  3) Claude Code"
@@ -87,17 +148,18 @@ case "${adapter_choice}" in
     if [ -f "${INDEX}" ] && command -v python3 &>/dev/null; then
       # Use python3 to do the embed — avoids shell/perl delimiter
       # conflicts with | characters in markdown table rows
+      _action=$([ "${UPGRADE_MODE}" = true ] && echo "updated" || echo "installed")
       python3 -c "
 import sys, re
 skill = open('${SKILL_DEST}').read()
 index = open('${INDEX}').read()
 result = re.sub(r'<!-- TODO:.*?-->', index, skill, flags=re.DOTALL)
 open('${SKILL_DEST}', 'w').write(result)
-" 2>/dev/null && ok "Antigravity adapter installed → .agent/skills/memory/SKILL.md (graph index embedded)" \
-      || { ok "Antigravity adapter installed → .agent/skills/memory/SKILL.md"
+" 2>/dev/null && ok "Antigravity adapter ${_action} → .agent/skills/memory/SKILL.md (graph index embedded)" \
+      || { ok "Antigravity adapter ${_action} → .agent/skills/memory/SKILL.md"
            warn "Could not embed index — paste core/graph_index.md into SKILL.md manually"; }
     else
-      ok "Antigravity adapter installed → .agent/skills/memory/SKILL.md"
+      ok "Antigravity adapter $([ "${UPGRADE_MODE}" = true ] && echo "updated" || echo "installed") → .agent/skills/memory/SKILL.md"
       [ ! -f "${INDEX}" ] && warn "graph_index.md not found — paste core/graph_index.md into SKILL.md manually"
       ! command -v python3 &>/dev/null && warn "python3 not found — paste core/graph_index.md into SKILL.md manually"
     fi
@@ -116,12 +178,15 @@ open('${SKILL_DEST}', 'w').write(result)
     DEST="${TARGET}/.cursor/rules"
     mkdir -p "${DEST}"
     cp "${SCRIPT_DIR}/adapters/cursor/memory.mdc" "${DEST}/memory.mdc"
-    ok "Cursor adapter installed → .cursor/rules/memory.mdc"
+    ok "Cursor adapter $([ "${UPGRADE_MODE}" = true ] && echo "updated" || echo "installed") → .cursor/rules/memory.mdc"
     ;;
   3)
     CLAUDE_MD="${TARGET}/CLAUDE.md"
     echo ""
-    if [ -f "${CLAUDE_MD}" ]; then
+    if [ "${UPGRADE_MODE}" = true ] && [ -f "${CLAUDE_MD}" ]; then
+      update_adapter_section "${CLAUDE_MD}" "${SCRIPT_DIR}/adapters/claude-code/CLAUDE_MEMORY.md"
+      ok "Claude Code adapter updated → CLAUDE.md"
+    elif [ -f "${CLAUDE_MD}" ]; then
       ask "CLAUDE.md found — append memory section to it? [Y/n]"
       read -r append_choice
       if [[ ! "${append_choice}" =~ ^[Nn]$ ]]; then
@@ -180,14 +245,18 @@ EOF
     DEST="${TARGET}/.github"
     mkdir -p "${DEST}"
     COPILOT_DEST="${DEST}/copilot-instructions.md"
-    if [ -f "${COPILOT_DEST}" ]; then
+    if [ "${UPGRADE_MODE}" = true ] && [ -f "${COPILOT_DEST}" ]; then
+      update_adapter_section "${COPILOT_DEST}" "${SCRIPT_DIR}/adapters/copilot/copilot-instructions-memory.md"
+      ok "Copilot adapter updated → .github/copilot-instructions.md"
+    elif [ -f "${COPILOT_DEST}" ]; then
       warn "${COPILOT_DEST} already exists — appending memory section."
       echo "" >> "${COPILOT_DEST}"
       cat "${SCRIPT_DIR}/adapters/copilot/copilot-instructions-memory.md" >> "${COPILOT_DEST}"
+      ok "Copilot adapter appended → .github/copilot-instructions.md"
     else
       cp "${SCRIPT_DIR}/adapters/copilot/copilot-instructions-memory.md" "${COPILOT_DEST}"
+      ok "Copilot adapter installed → .github/copilot-instructions.md"
     fi
-    ok "Copilot adapter installed → .github/copilot-instructions.md"
     ;;
   5)
     echo ""
@@ -203,21 +272,32 @@ esac
 
 # ── consistency check ─────────────────────────────────────────────────────────
 echo ""
-say "Running consistency check on installed core/..."
+say "Running consistency check on core/..."
 if bash "${TARGET}/core/scripts/consistency_check.sh" 2>/dev/null; then
   ok "Graph is consistent."
 else
-  warn "Consistency check flagged an issue — this is normal for a fresh install."
+  if [ "${UPGRADE_MODE}" = true ]; then
+    warn "Consistency check flagged an issue — review core/scripts/consistency_check.sh output."
+  else
+    warn "Consistency check flagged an issue — this is normal for a fresh install."
+  fi
 fi
 
 # ── done ──────────────────────────────────────────────────────────────────────
 echo ""
-echo "${bold}Setup complete.${reset}"
+echo "${bold}$([ "${UPGRADE_MODE}" = true ] && echo "Upgrade" || echo "Setup") complete.${reset}"
 echo ""
-echo "Next steps:"
-echo "  1. Seed the graph: open your AI tool and run the prompt in"
-echo "     ${SCRIPT_DIR}/scripts/seed_prompt.md"
-echo "  2. Review the generated nodes for accuracy."
-echo "  3. Commit core/ to version control."
-echo "  4. Keep the graph up to date: see core/HOW_TO_UPDATE.md"
+if [ "${UPGRADE_MODE}" = true ]; then
+  echo "Next steps:"
+  echo "  1. Rebuild the MCP server if needed: cd ${SCRIPT_DIR}/mcp && npm install && npm run build"
+  echo "  2. Restart your AI tool to pick up the updated adapter and MCP tools."
+  echo "  3. Commit any updated adapter files alongside your code."
+else
+  echo "Next steps:"
+  echo "  1. Seed the graph: open your AI tool and run the prompt in"
+  echo "     ${SCRIPT_DIR}/scripts/seed_prompt.md"
+  echo "  2. Review the generated nodes for accuracy."
+  echo "  3. Commit core/ to version control."
+  echo "  4. Keep the graph up to date: see core/HOW_TO_UPDATE.md"
+fi
 echo ""

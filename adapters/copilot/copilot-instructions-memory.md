@@ -1,3 +1,4 @@
+<!-- simplegraph-memory-start -->
 # Memory Graph Instructions
 
 This project uses a persistent memory graph stored in `core/`.
@@ -19,3 +20,4 @@ update the graph as part of the same commit. Protocol: `core/HOW_TO_UPDATE.md`.
 ## Multi-Repo
 If `core/graph_index.md` specifies a shared graph path, read that index too when working
 across repository boundaries.
+<!-- simplegraph-memory-end -->
