@@ -47,8 +47,7 @@ For Regression nodes, add:
 
 | Condition | Auto-priority |
 |---|---|
-| `REGRESSED_N_TIMES >= 3` | **HIGH** — this code is a recurring source of failures |
-| `REGRESSED_N_TIMES >= 2` or has `WATCHLIST` edge | **HIGH** — treat with extra caution |
+| `REGRESSED_N_TIMES >= 2` | **HIGH** — recurring failure source; treat with extra caution |
 | `LastUpdated` within the past 14 days | **MEDIUM** — recently changed, still settling |
 | Everything else | **LOW** — stable, load only if directly relevant |
 

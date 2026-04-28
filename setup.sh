@@ -119,11 +119,62 @@ open('${SKILL_DEST}', 'w').write(result)
     ok "Cursor adapter installed → .cursor/rules/memory.mdc"
     ;;
   3)
+    CLAUDE_MD="${TARGET}/CLAUDE.md"
     echo ""
-    say "Claude Code adapter: paste the following section into your CLAUDE.md"
-    echo "────────────────────────────────────"
-    cat "${SCRIPT_DIR}/adapters/claude-code/CLAUDE_MEMORY.md"
-    echo "────────────────────────────────────"
+    if [ -f "${CLAUDE_MD}" ]; then
+      ask "CLAUDE.md found — append memory section to it? [Y/n]"
+      read -r append_choice
+      if [[ ! "${append_choice}" =~ ^[Nn]$ ]]; then
+        echo "" >> "${CLAUDE_MD}"
+        cat "${SCRIPT_DIR}/adapters/claude-code/CLAUDE_MEMORY.md" >> "${CLAUDE_MD}"
+        ok "Claude Code adapter appended → CLAUDE.md"
+      else
+        say "Skipped. Paste adapters/claude-code/CLAUDE_MEMORY.md into CLAUDE.md manually."
+      fi
+    else
+      cp "${SCRIPT_DIR}/adapters/claude-code/CLAUDE_MEMORY.md" "${CLAUDE_MD}"
+      ok "Claude Code adapter installed → CLAUDE.md"
+    fi
+
+    # Offer to generate .claude/settings.json with MCP server config
+    echo ""
+    ask "Generate .claude/settings.json with MCP server config? [Y/n]"
+    read -r mcp_choice
+    if [[ ! "${mcp_choice}" =~ ^[Nn]$ ]]; then
+      CLAUDE_DIR="${TARGET}/.claude"
+      SETTINGS_FILE="${CLAUDE_DIR}/settings.json"
+      MCP_DIST="$(cd "${SCRIPT_DIR}/mcp" && pwd)/dist/index.js"
+      CORE_PATH="$(cd "${TARGET}/core" && pwd)"
+
+      mkdir -p "${CLAUDE_DIR}"
+      if [ -f "${SETTINGS_FILE}" ]; then
+        warn "${SETTINGS_FILE} already exists — add the block below manually:"
+        echo ""
+        cat <<EOF
+  "mcpServers": {
+    "simplegraph": {
+      "command": "node",
+      "args": ["${MCP_DIST}"],
+      "env": { "SIMPLEGRAPH_ROOT": "${CORE_PATH}" }
+    }
+  }
+EOF
+      else
+        cat > "${SETTINGS_FILE}" <<EOF
+{
+  "mcpServers": {
+    "simplegraph": {
+      "command": "node",
+      "args": ["${MCP_DIST}"],
+      "env": { "SIMPLEGRAPH_ROOT": "${CORE_PATH}" }
+    }
+  }
+}
+EOF
+        ok "MCP config written → .claude/settings.json"
+      fi
+      warn "Build the MCP server first: cd ${SCRIPT_DIR}/mcp && npm install && npm run build"
+    fi
     ;;
   4)
     DEST="${TARGET}/.github"

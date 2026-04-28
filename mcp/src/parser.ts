@@ -27,9 +27,9 @@ export function parseNodes(content: string, sourceFile: string): GraphNode[] {
     const get = (field: string): string =>
       section.match(new RegExp(`\\*\\*${field}:\\*\\*\\s*(.+)`))?.[1]?.trim() ?? "";
 
-    // Edges block: lines between **Edges:** and the next **Field:** or ---
+    // Edges block: lines between **Edges:** and the next **Field:** or --- or end of string
     const edgesBlock =
-      section.match(/\*\*Edges:\*\*\n([\s\S]*?)(?=\n\*\*[A-Za-z]|\n---)/)?.[1] ?? "";
+      section.match(/\*\*Edges:\*\*\n([\s\S]*?)(?=\n\*\*[A-Za-z]|\n---|$)/)?.[1] ?? "";
     const edges = (edgesBlock.match(/- .+/g) ?? []).map(e => e.trim());
 
     // Files: strip backticks
@@ -68,11 +68,15 @@ export function formatNode(
   if (node.regressedNTimes !== undefined) {
     lines.push(`**REGRESSED_N_TIMES:** ${node.regressedNTimes}`);
   }
-  lines.push(`**Edges:**`);
-  for (const edge of node.edges) {
-    lines.push(`- ${edge.startsWith("- ") ? edge.slice(2) : edge}`);
+  if (node.edges.length > 0) {
+    lines.push(`**Edges:**`);
+    for (const edge of node.edges) {
+      lines.push(`- ${edge.startsWith("- ") ? edge.slice(2) : edge}`);
+    }
+  } else {
+    lines.push(`**Edges:** _(none)_`);
   }
-  lines.push(`**Files:** ${node.files.map(f => `\`${f}\``).join(", ")}`);
+  lines.push(`**Files:** ${node.files.length > 0 ? node.files.map(f => `\`${f}\``).join(", ") : "_(none)_"}`);
   lines.push(`**LastUpdated:** ${node.lastUpdated}`);
   return lines.join("\n");
 }
