@@ -130,9 +130,10 @@ echo "  1) Antigravity"
 echo "  2) Cursor"
 echo "  3) Claude Code"
 echo "  4) GitHub Copilot"
-echo "  5) Generic (ChatGPT, Gemini, Windsurf, Aider, etc.)"
-echo "  6) Skip for now"
-ask "Choice [1-6]:"
+echo "  5) Zed"
+echo "  6) Generic (ChatGPT, Gemini, Windsurf, Aider, etc.)"
+echo "  7) Skip for now"
+ask "Choice [1-7]:"
 read -r adapter_choice
 
 case "${adapter_choice}" in
@@ -259,6 +260,59 @@ EOF
     fi
     ;;
   5)
+    DEST="${TARGET}/.zed/rules"
+    mkdir -p "${DEST}"
+    cp "${SCRIPT_DIR}/adapters/zed/memory.md" "${DEST}/memory.md"
+    ok "Zed adapter $([ "${UPGRADE_MODE}" = true ] && echo "updated" || echo "installed") → .zed/rules/memory.md"
+
+    # Offer to generate .zed/settings.json with context server config
+    echo ""
+    ask "Generate .zed/settings.json with context server (MCP) config? [Y/n]"
+    read -r zed_mcp_choice
+    if [[ ! "${zed_mcp_choice}" =~ ^[Nn]$ ]]; then
+      ZED_DIR="${TARGET}/.zed"
+      ZED_SETTINGS="${ZED_DIR}/settings.json"
+      MCP_DIST="$(cd "${SCRIPT_DIR}/mcp" && pwd)/dist/index.js"
+      CORE_PATH="$(cd "${TARGET}/core" && pwd)"
+
+      mkdir -p "${ZED_DIR}"
+      if [ -f "${ZED_SETTINGS}" ]; then
+        warn "${ZED_SETTINGS} already exists — add the block below manually:"
+        echo ""
+        cat <<EOF
+  "context_servers": {
+    "simplegraph": {
+      "command": {
+        "path": "node",
+        "args": ["${MCP_DIST}"],
+        "env": { "SIMPLEGRAPH_ROOT": "${CORE_PATH}" }
+      },
+      "settings": {}
+    }
+  }
+EOF
+      else
+        cat > "${ZED_SETTINGS}" <<EOF
+{
+  "context_servers": {
+    "simplegraph": {
+      "command": {
+        "path": "node",
+        "args": ["${MCP_DIST}"],
+        "env": { "SIMPLEGRAPH_ROOT": "${CORE_PATH}" }
+      },
+      "settings": {}
+    }
+  }
+}
+EOF
+        ok "Zed context server config written → .zed/settings.json"
+      fi
+      warn "Build the MCP server first: cd ${SCRIPT_DIR}/mcp && npm install && npm run build"
+      warn "Note: claude-acp and Claude Code in terminal use CLAUDE.md, not this config."
+    fi
+    ;;
+  6)
     echo ""
     say "Generic adapter: paste the block inside adapters/generic/AGENT_MEMORY.md"
     say "into your AI tool's custom instructions / system prompt."

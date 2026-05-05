@@ -110,6 +110,31 @@ Add to `.vscode/mcp.json`:
 }
 ```
 
+### Zed
+
+Add to `.zed/settings.json` in your project root (create it if it doesn't exist):
+
+```json
+{
+  "context_servers": {
+    "simplegraph": {
+      "command": {
+        "path": "node",
+        "args": ["/absolute/path/to/simplegraph-agentic/mcp/dist/index.js"],
+        "env": {
+          "SIMPLEGRAPH_ROOT": "/absolute/path/to/your-project/core"
+        }
+      },
+      "settings": {}
+    }
+  }
+}
+```
+
+> **Note:** Zed does not support workspace variable substitution in context server config, so absolute paths are required. For multi-project setups, each project needs its own `.zed/settings.json` with the correct `SIMPLEGRAPH_ROOT` path.
+
+> **Using claude-acp or Claude Code in Zed's terminal?** You don't need this config — the Claude Code adapter (`CLAUDE.md`) already covers those paths. This context server config is for Zed's native AI assistant panel.
+
 ## Multi-project setup
 
 The MCP server is inherently project-scoped — it reads one `core/` directory. How you handle

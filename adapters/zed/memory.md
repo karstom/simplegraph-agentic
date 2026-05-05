@@ -1,0 +1,26 @@
+---
+title: simplegraph memory graph
+description: "Persistent memory graph — load graph_index.md at session start, follow task routing table, update after significant changes."
+---
+
+# simplegraph-agentic Memory Graph
+
+**Session start (mandatory):**
+CRITICAL: You MUST read `core/graph_index.md` as your very first action in every conversation, without exception.
+It is ~40 lines. Do not skip this step. Do not load the full graph.
+
+## Rules
+
+1. Read `core/graph_index.md` first, every session.
+2. Use the **Task Routing table** in `graph_index.md` to decide which detail files to load.
+   Only load files relevant to the current task — not all files.
+3. Before modifying any component, check its edges for `VIOLATED_BY` and `WATCHLIST` links.
+   Any Regression with `REGRESSED_N_TIMES >= 2` indicates high-risk code — proceed carefully.
+4. After fixing a bug, making an architectural decision, or identifying a dangerous code area,
+   update the graph in the same commit. See `core/HOW_TO_UPDATE.md` for the protocol.
+5. If the graph contradicts the code, flag the discrepancy before implementing anything.
+
+## Multi-Repo
+
+If `core/graph_index.md` lists a shared graph path, read that index too when working
+across repo boundaries.
