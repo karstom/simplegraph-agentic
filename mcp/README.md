@@ -74,6 +74,31 @@ Add to `~/Library/Application\ Support/Claude/claude_desktop_config.json` (macOS
 }
 ```
 
+### Claude Code CLI
+
+Add to `.mcp.json` in your project root (create it if it doesn't exist):
+
+```json
+{
+  "mcpServers": {
+    "simplegraph": {
+      "command": "/bin/bash",
+      "args": ["-c", "SIMPLEGRAPH_ROOT=/absolute/path/to/your-project/core node /absolute/path/to/simplegraph-agentic/mcp/dist/index.js"]
+    }
+  }
+}
+```
+
+Then add `enableAllProjectMcpServers` to `.claude/settings.json` to auto-approve the server without prompting:
+
+```json
+{
+  "enableAllProjectMcpServers": true
+}
+```
+
+> **Important:** `mcpServers` is **not** a valid field in `.claude/settings.json` — it is silently ignored. MCP servers for Claude Code CLI must be configured in `.mcp.json`. The bash wrapper is required instead of the `env` field because Claude Code strips the process environment when `env` is set, causing module resolution failures even with an absolute command path.
+
 ### Cursor
 
 Add to `.cursor/mcp.json` in your project root:
@@ -133,7 +158,7 @@ Add to `.zed/settings.json` in your project root (create it if it doesn't exist)
 
 > **Note:** Zed does not support workspace variable substitution in context server config, so absolute paths are required. For multi-project setups, each project needs its own `.zed/settings.json` with the correct `SIMPLEGRAPH_ROOT` path.
 
-> **Using claude-acp or Claude Code in Zed's terminal?** You don't need this config — the Claude Code adapter (`CLAUDE.md`) already covers those paths. This context server config is for Zed's native AI assistant panel.
+> **Using Claude Code CLI?** See the Claude Code CLI section above — it uses `.mcp.json`, not `.zed/settings.json`. This Zed config is for Zed's native AI assistant panel only.
 
 ## Multi-project setup
 

@@ -202,42 +202,57 @@ open('${SKILL_DEST}', 'w').write(result)
       ok "Claude Code adapter installed → CLAUDE.md"
     fi
 
-    # Offer to generate .claude/settings.json with MCP server config
+    # Offer to generate .mcp.json with MCP server config
+    # Note: mcpServers is NOT valid in .claude/settings.json — Claude Code reads .mcp.json
     echo ""
-    ask "Generate .claude/settings.json with MCP server config? [Y/n]"
+    ask "Generate .mcp.json with MCP server config? [Y/n]"
     read -r mcp_choice
     if [[ ! "${mcp_choice}" =~ ^[Nn]$ ]]; then
+      MCP_JSON="${TARGET}/.mcp.json"
       CLAUDE_DIR="${TARGET}/.claude"
       SETTINGS_FILE="${CLAUDE_DIR}/settings.json"
       MCP_DIST="$(cd "${SCRIPT_DIR}/mcp" && pwd)/dist/index.js"
       CORE_PATH="$(cd "${TARGET}/core" && pwd)"
 
-      mkdir -p "${CLAUDE_DIR}"
-      if [ -f "${SETTINGS_FILE}" ]; then
-        warn "${SETTINGS_FILE} already exists — add the block below manually:"
+      if [ -f "${MCP_JSON}" ]; then
+        warn "${MCP_JSON} already exists — add the block below manually:"
         echo ""
         cat <<EOF
   "mcpServers": {
     "simplegraph": {
-      "command": "node",
-      "args": ["${MCP_DIST}"],
-      "env": { "SIMPLEGRAPH_ROOT": "${CORE_PATH}" }
+      "command": "/bin/bash",
+      "args": ["-c", "SIMPLEGRAPH_ROOT=${CORE_PATH} node ${MCP_DIST}"]
     }
   }
 EOF
       else
-        cat > "${SETTINGS_FILE}" <<EOF
+        cat > "${MCP_JSON}" <<EOF
 {
   "mcpServers": {
     "simplegraph": {
-      "command": "node",
-      "args": ["${MCP_DIST}"],
-      "env": { "SIMPLEGRAPH_ROOT": "${CORE_PATH}" }
+      "command": "/bin/bash",
+      "args": ["-c", "SIMPLEGRAPH_ROOT=${CORE_PATH} node ${MCP_DIST}"]
     }
   }
 }
 EOF
-        ok "MCP config written → .claude/settings.json"
+        ok "MCP config written → .mcp.json"
+      fi
+
+      # Also ensure enableAllProjectMcpServers is set in .claude/settings.json
+      mkdir -p "${CLAUDE_DIR}"
+      if [ -f "${SETTINGS_FILE}" ]; then
+        if ! grep -q "enableAllProjectMcpServers" "${SETTINGS_FILE}"; then
+          warn "${SETTINGS_FILE} already exists — add this field to auto-approve the MCP server:"
+          echo '  "enableAllProjectMcpServers": true'
+        fi
+      else
+        cat > "${SETTINGS_FILE}" <<EOF
+{
+  "enableAllProjectMcpServers": true
+}
+EOF
+        ok "Claude Code settings written → .claude/settings.json"
       fi
       warn "Build the MCP server first: cd ${SCRIPT_DIR}/mcp && npm install && npm run build"
     fi
