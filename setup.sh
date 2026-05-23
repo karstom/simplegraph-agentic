@@ -131,9 +131,10 @@ echo "  2) Cursor"
 echo "  3) Claude Code"
 echo "  4) GitHub Copilot"
 echo "  5) Zed"
-echo "  6) Generic (ChatGPT, Gemini, Windsurf, Aider, etc.)"
-echo "  7) Skip for now"
-ask "Choice [1-7]:"
+echo "  6) Codex CLI (OpenAI)"
+echo "  7) Generic (ChatGPT, Gemini, Windsurf, Aider, etc.)"
+echo "  8) Skip for now"
+ask "Choice [1-8]:"
 read -r adapter_choice
 
 case "${adapter_choice}" in
@@ -328,6 +329,28 @@ EOF
     fi
     ;;
   6)
+    AGENTS_MD="${TARGET}/AGENTS.md"
+    echo ""
+    if [ "${UPGRADE_MODE}" = true ] && [ -f "${AGENTS_MD}" ]; then
+      update_adapter_section "${AGENTS_MD}" "${SCRIPT_DIR}/adapters/codex/AGENTS_MEMORY.md"
+      ok "Codex adapter updated → AGENTS.md"
+    elif [ -f "${AGENTS_MD}" ]; then
+      ask "AGENTS.md found — append memory section to it? [Y/n]"
+      read -r append_choice
+      if [[ ! "${append_choice}" =~ ^[Nn]$ ]]; then
+        echo "" >> "${AGENTS_MD}"
+        cat "${SCRIPT_DIR}/adapters/codex/AGENTS_MEMORY.md" >> "${AGENTS_MD}"
+        ok "Codex adapter appended → AGENTS.md"
+      else
+        say "Skipped. Paste adapters/codex/AGENTS_MEMORY.md into AGENTS.md manually."
+      fi
+    else
+      cp "${SCRIPT_DIR}/adapters/codex/AGENTS_MEMORY.md" "${AGENTS_MD}"
+      ok "Codex adapter installed → AGENTS.md"
+    fi
+    warn "Ensure AGENTS.md support is enabled: set child_agents_md = true in [features] of config.toml"
+    ;;
+  7)
     echo ""
     say "Generic adapter: paste the block inside adapters/generic/AGENT_MEMORY.md"
     say "into your AI tool's custom instructions / system prompt."

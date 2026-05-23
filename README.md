@@ -2,7 +2,7 @@
 
 A lightweight **persistent memory graph** for AI coding assistants.
 
-Your agent accumulates structured knowledge about your codebase — recurring bugs, deliberate decisions, dangerous code areas — and carries it across sessions without bloating every context window. Works with Claude Code, Cursor, GitHub Copilot, Antigravity, Zed, and any tool that accepts custom instructions.
+Your agent accumulates structured knowledge about your codebase — recurring bugs, deliberate decisions, dangerous code areas — and carries it across sessions without bloating every context window. Works with Claude Code, Cursor, GitHub Copilot, Antigravity, Zed, Codex CLI, and any tool that accepts custom instructions.
 
 ---
 
@@ -108,6 +108,7 @@ See [`mcp/README.md`](mcp/README.md) for installation (Claude Desktop, Cursor, V
 | **GitHub Copilot** | `adapters/copilot/copilot-instructions-memory.md` | `.github/copilot-instructions.md` |
 | **Antigravity** | `adapters/antigravity/SKILL.md` | `.agent/skills/memory/SKILL.md` |
 | **Zed** | `adapters/zed/memory.md` | `.zed/rules/memory.md` |
+| **Codex CLI** | `adapters/codex/AGENTS_MEMORY.md` | Appended to `AGENTS.md` (setup.sh handles this) |
 | **Generic** | `adapters/generic/AGENT_MEMORY.md` | Paste into custom instructions |
 
 The generic adapter works with ChatGPT Projects, Gemini Gems, Windsurf, Aider, Cline, or any tool that accepts a persistent system prompt.
