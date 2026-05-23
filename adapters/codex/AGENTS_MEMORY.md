@@ -12,22 +12,29 @@ and high-risk code areas across sessions.
 
 ### Session Start (mandatory)
 
-CRITICAL: Read `core/graph_index.md` as your very first action in every conversation,
-without exception. It is ~40 lines. Do not skip this step. Do not load the full graph.
+**If the simplegraph MCP server is configured:** call `simplegraph_index` as your first
+action. It returns the full index and merges any shared team graph automatically.
+
+**If MCP is not available:** read `core/graph_index.md` as your first action instead.
 
 Use the **Task Routing** table in the index to load only the detail files relevant to
-your current task.
+your current task — do not load the full graph.
 
 ### Before Editing Any File
 
-Check the graph nodes that reference the file you're about to modify:
-- Follow any `VIOLATED_BY` edges to find Invariants the file could break
-- Follow any `WATCHLIST` edges to find known dangerous areas
-- Any Regression node with `REGRESSED_N_TIMES >= 2` means the code is high-risk — proceed carefully
+Call `simplegraph_check_files(["path/to/file"])` before modifying code. It returns all
+known regressions, watchlists, and invariants that reference those files. Any node with
+`REGRESSED_N_TIMES >= 2` is high-risk — proceed with extra care.
+
+Without MCP: follow the `VIOLATED_BY` and `WATCHLIST` edge links in the loaded graph
+nodes manually before editing.
 
 ### Before Generating Code
 
-Read `core/anti_patterns.md` and verify your output does not match any banned pattern.
+Call `simplegraph_anti_patterns()` and check your output against the banned patterns
+list before committing.
+
+Without MCP: read `core/anti_patterns.md` manually.
 
 ### After Fixing Bugs or Making Decisions
 
@@ -35,13 +42,29 @@ Update the graph as part of the same commit. Protocol is in `core/HOW_TO_UPDATE.
 
 | Situation | Action |
 |---|---|
-| Bug fixed | Add a Regression node to `core/regressions.md`, update `core/graph_index.md` |
-| Decision made | Add a Decision node to `core/decisions.md`, update `core/graph_index.md` |
-| Bug recurred | Increment `REGRESSED_N_TIMES` on the existing Regression node |
-| Regression resolved | Move the node to `core/archive/resolved_regressions.md` |
+| Bug fixed | `simplegraph_add_node` (type: Regression), then `simplegraph_update_index` |
+| Decision made | `simplegraph_add_node` (type: Decision), then `simplegraph_update_index` |
+| Bug recurred | `simplegraph_update_node` with `field:"REGRESSED_N_TIMES"`, `value:"increment"` |
+| Regression resolved | `simplegraph_archive_regression` |
 
-### Multi-Repo
+Without MCP: edit `core/regressions.md` / `core/decisions.md` and update `core/graph_index.md` directly.
 
-If `core/graph_index.md` lists a shared graph path, read that index too when working
-across repository boundaries.
+### MCP Tools Quick Reference
+
+| Tool | When |
+|---|---|
+| `simplegraph_index` | Session start (mandatory) |
+| `simplegraph_check_files` | Before editing any file |
+| `simplegraph_anti_patterns` | Before generating code |
+| `simplegraph_get_node` | Fetch a known node by exact ID |
+| `simplegraph_search` | Keyword search across all nodes |
+| `simplegraph_nodes` | Browse all nodes in a category |
+| `simplegraph_add_node` | After fixing a bug or making a decision |
+| `simplegraph_update_index` | Immediately after `simplegraph_add_node` |
+| `simplegraph_update_node` | Update a field on an existing node |
+| `simplegraph_archive_regression` | When a regression is permanently resolved |
+| `simplegraph_scratchpad` | Session notes not yet ready to commit as nodes |
+
+If this is a multi-repo project and the index lists a shared graph path, call
+`simplegraph_index` — it merges both graphs automatically.
 <!-- simplegraph-memory-end -->

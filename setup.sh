@@ -349,6 +349,38 @@ EOF
       ok "Codex adapter installed → AGENTS.md"
     fi
     warn "Ensure AGENTS.md support is enabled: set child_agents_md = true in [features] of config.toml"
+
+    # Offer to generate .codex/config.toml with MCP server config
+    echo ""
+    ask "Generate .codex/config.toml with MCP server config? [Y/n]"
+    read -r codex_mcp_choice
+    if [[ ! "${codex_mcp_choice}" =~ ^[Nn]$ ]]; then
+      CODEX_DIR="${TARGET}/.codex"
+      CODEX_CONFIG="${CODEX_DIR}/config.toml"
+      MCP_DIST="$(cd "${SCRIPT_DIR}/mcp" && pwd)/dist/index.js"
+      CORE_PATH="$(cd "${TARGET}/core" && pwd)"
+
+      mkdir -p "${CODEX_DIR}"
+      if [ -f "${CODEX_CONFIG}" ]; then
+        warn "${CODEX_CONFIG} already exists — add the block below manually:"
+        echo ""
+        cat <<EOF
+[mcp_servers.simplegraph]
+command = "node"
+args = ["${MCP_DIST}"]
+env = { SIMPLEGRAPH_ROOT = "${CORE_PATH}" }
+EOF
+      else
+        cat > "${CODEX_CONFIG}" <<EOF
+[mcp_servers.simplegraph]
+command = "node"
+args = ["${MCP_DIST}"]
+env = { SIMPLEGRAPH_ROOT = "${CORE_PATH}" }
+EOF
+        ok "MCP config written → .codex/config.toml"
+      fi
+      warn "Build the MCP server first: cd ${SCRIPT_DIR}/mcp && npm install && npm run build"
+    fi
     ;;
   7)
     echo ""

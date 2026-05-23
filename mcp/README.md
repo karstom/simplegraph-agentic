@@ -135,6 +135,21 @@ Add to `.vscode/mcp.json`:
 }
 ```
 
+### Codex CLI
+
+Add to `.codex/config.toml` in your project root (create it if it doesn't exist):
+
+```toml
+[mcp_servers.simplegraph]
+command = "node"
+args = ["/absolute/path/to/simplegraph-agentic/mcp/dist/index.js"]
+env = { SIMPLEGRAPH_ROOT = "/absolute/path/to/your-project/core" }
+```
+
+You can also add this to `~/.codex/config.toml` for a global install (useful if you
+work across multiple projects — pair with named instances as described in
+[Multi-project setup](#multi-project-setup)).
+
 ### Zed
 
 Add to `.zed/settings.json` in your project root (create it if it doesn't exist):
