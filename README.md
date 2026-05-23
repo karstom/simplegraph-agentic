@@ -106,10 +106,10 @@ See [`mcp/README.md`](mcp/README.md) for installation (Claude Desktop, Cursor, V
 | **Claude Code** | `adapters/claude-code/CLAUDE_MEMORY.md` | Appended to `CLAUDE.md` (setup.sh handles this) |
 | **Cursor** | `adapters/cursor/memory.mdc` | `.cursor/rules/memory.mdc` |
 | **GitHub Copilot** | `adapters/copilot/copilot-instructions-memory.md` | `.github/copilot-instructions.md` |
-| **Antigravity** | `adapters/antigravity/SKILL.md` | `.agent/skills/memory/SKILL.md` |
 | **Zed** | `adapters/zed/memory.md` | `.zed/rules/memory.md` |
 | **Codex CLI** | `adapters/codex/AGENTS_MEMORY.md` | Appended to `AGENTS.md` (setup.sh handles this) |
 | **Generic** | `adapters/generic/AGENT_MEMORY.md` | Paste into custom instructions |
+| ~~**Antigravity**~~ | ~~`adapters/antigravity/SKILL.md`~~ | ~~**Deprecated** — broken in Antigravity 2.x~~ |
 
 The generic adapter works with ChatGPT Projects, Gemini Gems, Windsurf, Aider, Cline, or any tool that accepts a persistent system prompt.
 

@@ -3,6 +3,9 @@ name: simplegraph-agentic-memory
 description: "MANDATORY for all tasks. Contains architecture rules, active bugs, dangerous code zones, and anti-patterns for this codebase. Required context for bug fixes, UI work, feature development, refactoring, and deployments. Read before touching any code."
 ---
 
+> **⚠ DEPRECATED:** This adapter is broken in Antigravity 2.x and is no longer maintained.
+> Use the Generic adapter (`adapters/generic/AGENT_MEMORY.md`) as a fallback, or switch to a supported tool.
+
 # Memory Graph
 
 > [!IMPORTANT]
