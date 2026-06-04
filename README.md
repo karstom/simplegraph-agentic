@@ -20,11 +20,11 @@ Measured on a production codebase with 31 graph files:
 
 | Approach | Session start | Per task |
 |---|---|---|
-| **simplegraph (tiered)** | **~862 tokens** | **~4,300 tokens** |
-| Monolith (flat file) | ~25,400 tokens | ~25,400 tokens |
+| **simplegraph (tiered)** | **~944 tokens** | **~6,580 tokens** |
+| Monolith (flat file) | ~30,700 tokens | ~30,700 tokens |
 | No memory | 0 up front, ~500–2,000 per re-explanation | compounds |
 
-**29× reduction** at session start. **5× reduction** for a typical task. The savings compound across every request in a session — the agent reads ~862 tokens once, then loads only the 2–3 files relevant to the current task. Run `bash scripts/token_benchmark.sh` on your own graph to measure your numbers.
+**42× reduction** at session start. **6× reduction** for a typical task. The savings compound across every request in a session — the agent reads ~944 tokens once, then loads only the 2–3 files relevant to the current task. Run `bash scripts/token_benchmark.sh` on your own graph to measure your numbers.
 
 ### Typed nodes and edges — follow risk chains
 
