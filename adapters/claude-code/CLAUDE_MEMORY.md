@@ -24,7 +24,8 @@ your current task — do not load the full graph.
 
 Call `simplegraph_check_files(["path/to/file"])` before modifying code. It returns all
 known regressions, watchlists, and invariants that reference those files. Any node with
-`REGRESSED_N_TIMES >= 2` is high-risk — proceed with extra care.
+`REGRESSED_N_TIMES >= 2` is high-risk — MUST first clear the Recurrence Root-Cause Gate
+in `core/HOW_TO_UPDATE.md`; adding the Nth guard/stamp for the same derived flag is banned.
 
 Without MCP: follow the `VIOLATED_BY` and `WATCHLIST` edge links in the loaded graph
 nodes manually before editing.
@@ -42,7 +43,7 @@ Update the graph as part of the same commit:
 |---|---|
 | Bug fixed | `simplegraph_add_node` (type: Regression), then `simplegraph_update_index` |
 | Decision made | `simplegraph_add_node` (type: Decision), then `simplegraph_update_index` |
-| Bug recurred | `simplegraph_update_node` with `field:"REGRESSED_N_TIMES"`, `value:"increment"` |
+| Bug recurred | Clear Root-Cause Gate first (see `core/HOW_TO_UPDATE.md`), then `simplegraph_update_node` with `field:"REGRESSED_N_TIMES"`, `value:"increment"`, `root_cause:"<answers>"` — no same-class patch until gate is cleared |
 | Regression permanently resolved | `simplegraph_archive_regression` |
 
 Full protocol: `core/HOW_TO_UPDATE.md`

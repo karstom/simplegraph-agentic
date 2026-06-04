@@ -9,6 +9,7 @@ export interface GraphNode {
   summary: string;
   tags: string[];
   regressedNTimes?: number;
+  rootCause?: string;
   edges: string[];
   files: string[];
   lastUpdated: string;
@@ -44,6 +45,7 @@ export function parseNodes(content: string, sourceFile: string): GraphNode[] {
       : [];
 
     const regressedMatch = section.match(/\*\*REGRESSED_N_TIMES:\*\*\s*(\d+)/);
+    const rootCauseMatch = section.match(/\*\*RootCause:\*\*\s*(.+)/);
 
     return [{
       id: idMatch[1],
@@ -53,6 +55,7 @@ export function parseNodes(content: string, sourceFile: string): GraphNode[] {
       summary: get("Summary"),
       tags,
       regressedNTimes: regressedMatch ? parseInt(regressedMatch[1], 10) : undefined,
+      rootCause: rootCauseMatch ? rootCauseMatch[1].trim() : undefined,
       edges,
       files,
       lastUpdated: get("LastUpdated"),
@@ -76,6 +79,9 @@ export function formatNode(
   ];
   if (node.regressedNTimes !== undefined) {
     lines.push(`**REGRESSED_N_TIMES:** ${node.regressedNTimes}`);
+    if (node.rootCause) {
+      lines.push(`**RootCause:** ${node.rootCause}`);
+    }
   }
   if (node.edges.length > 0) {
     lines.push(`**Edges:**`);

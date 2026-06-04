@@ -22,6 +22,29 @@ You SHOULD update a node when:
 
 ---
 
+## Recurrence Root-Cause Gate
+
+When `REGRESSED_N_TIMES` reaches **2 or more**, **stop — do not write a fix yet.**
+
+The counter reaching 2 means a symptomatic fix was applied at least once without eliminating the root cause. Another symptomatic fix will produce recurrence 3. Before touching code, you must answer all three questions below and supply them as the `root_cause` argument to `simplegraph_update_node`. The MCP tool will refuse to increment the counter without it.
+
+### Required answers
+
+**1. SOURCE OF TRUTH**
+What is the authoritative source for the state this regression corrupts? Why isn't the code reading that source directly instead of maintaining a local copy, mirror, or derived flag? If the answer is "there is no single source," that IS the root cause — the fix is to establish one.
+
+**2. VIOLATED INVARIANT**
+Which rule is being broken? State it as a falsifiable sentence (e.g., "the secured status must always be derived from `securedStatusFromBackend` at render time, never stored separately"). If no Invariant node captures this rule yet, add one with `simplegraph_add_node` before proceeding.
+
+**3. WHY PRIOR FIXES WERE SYMPTOMATIC**
+What did fixes 1..N−1 treat instead of the root cause? Be specific. Example: "Fix 1 added a guard in ComponentA. Fix 2 added a preserve call in ComponentB. Both assumed the flag was reliable; neither questioned why it needed to be patched in more than one place."
+
+### The Nth-stamp smell
+
+If the proposed fix adds the *N*th place in the codebase that sets, preserves, or re-stamps the same derived boolean or flag, count the writers. More than ~2 write sites for a single derived value is a strong signal that the code should be reading the source of truth directly rather than maintaining a mirror. Each new write site is a new recurrence waiting to happen.
+
+---
+
 ## Node Format
 
 Every node follows this exact format:
