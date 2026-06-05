@@ -20,7 +20,7 @@ Measured on a production codebase with 31 graph files:
 
 | Approach | Session start | Per task |
 |---|---|---|
-| **simplegraph (tiered)** | **~944 tokens** | **~6,580 tokens** |
+| **simplegraph (tiered)** | **~933 tokens** | **~6,165 tokens** |
 | Monolith (flat file) | ~30,700 tokens | ~30,700 tokens |
 | No memory | 0 up front, ~500–2,000 per re-explanation | compounds |
 
