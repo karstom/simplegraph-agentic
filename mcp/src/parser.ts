@@ -13,6 +13,10 @@ export interface GraphNode {
   edges: string[];
   files: string[];
   lastUpdated: string;
+  /** Present on nodes written by `sg seed`: "<extractor>@<ver> | confidence: N | hash: H". */
+  seeded?: string;
+  /** Present on seeded nodes: commits and file locations the node was mined from. */
+  provenance?: string;
   rawContent: string;
   sourceFile: string;
 }
@@ -59,6 +63,8 @@ export function parseNodes(content: string, sourceFile: string): GraphNode[] {
       edges,
       files,
       lastUpdated: get("LastUpdated"),
+      seeded: get("Seeded") || undefined,
+      provenance: get("Provenance") || undefined,
       rawContent: section,
       sourceFile,
     }];
@@ -93,5 +99,7 @@ export function formatNode(
   }
   lines.push(`**Files:** ${node.files.length > 0 ? node.files.map(f => `\`${f}\``).join(", ") : "_(none)_"}`);
   lines.push(`**LastUpdated:** ${node.lastUpdated}`);
+  if (node.provenance) lines.push(`**Provenance:** ${node.provenance}`);
+  if (node.seeded) lines.push(`**Seeded:** ${node.seeded}`);
   return lines.join("\n");
 }

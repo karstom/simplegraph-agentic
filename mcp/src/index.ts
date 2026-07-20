@@ -315,7 +315,7 @@ export function handleAddNode(
 // ── MCP Server ────────────────────────────────────────────────────────────────
 
 const server = new Server(
-  { name: "simplegraph-mcp", version: "0.2.0" },
+  { name: "simplegraph-mcp", version: "0.3.0" },
   { capabilities: { tools: {} } }
 );
 
@@ -748,13 +748,18 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   process.stderr.write(
-    `simplegraph-mcp v0.2.0 ready\n` +
+    `simplegraph-mcp v0.3.0 ready\n` +
     `  GRAPH_ROOT:  ${GRAPH_ROOT}\n` +
     (SHARED_ROOT ? `  SHARED_ROOT: ${SHARED_ROOT}\n` : "")
   );
 }
 
-main().catch((e) => {
-  process.stderr.write(`Fatal: ${e.message}\n`);
-  process.exit(1);
-});
+// Only start the server when run directly (bin or `node dist/index.js`) —
+// importing this module for its exported handlers (tests) must not attach
+// to stdio, or the importing process never exits.
+if (/(^|[\\/])index\.(js|ts)$/.test(process.argv[1] ?? "")) {
+  main().catch((e) => {
+    process.stderr.write(`Fatal: ${e.message}\n`);
+    process.exit(1);
+  });
+}

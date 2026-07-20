@@ -1,5 +1,11 @@
 # Seed Prompt — Bootstrap Your Memory Graph
 
+> **Prefer `sg seed` for a reproducible start.** The CLI (see the README and
+> `mcp/`) mines your git history and working tree deterministically — offline,
+> no API key, full provenance on every node. This prompt is the LLM-assisted
+> alternative: richer summaries, but non-deterministic. The two compose: run
+> `sg seed` first, then use this prompt to deepen what it found.
+
 Use this prompt once (in any AI coding tool) to populate the graph from a cold start.
 Copy it, fill in the bracketed values, and paste it into your AI assistant.
 

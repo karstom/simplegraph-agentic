@@ -36,6 +36,21 @@ npm install
 npm run build
 ```
 
+## Bundled CLI: `sg seed`
+
+This package also ships the `sg` bin. `sg seed` bootstraps a memory graph by
+mining a repository's git history and working tree — reverts/fix commits →
+Regressions, ADRs and merge bodies → Decisions, rule comments and test names →
+Invariants, TODO/churn → Watchlists, directory structure → Components.
+Deterministic, offline, no API key; every node carries provenance and a
+confidence score, and nothing is written without review (`--dry-run` /
+interactive confirm / `--yes`). See the root README for the full flag list.
+
+```bash
+npm link          # or: node dist/seed/cli.js seed --help
+sg seed /path/to/your/project --dry-run
+```
+
 ## Configuration
 
 ### Antigravity

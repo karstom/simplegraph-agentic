@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.3.0] — 2026-07-20
+
+### New: `sg seed` — bootstrap a graph from repository history
+
+The mcp package now ships a second bin, `sg`, whose first command mines an
+existing repository into a draft memory graph. Deterministic, offline, no API
+key required (Tier 1); an LLM enrichment seam exists behind the same extractor
+interface but is deliberately unimplemented this release.
+
+- **Extractors:** reverts and repeated/annotated fix commits → Regressions;
+  ADR/RFC docs, merge-commit bodies, deliberate-change commits → Decisions;
+  emphatic rule comments and rule-shaped test names → Invariants; TODO-class
+  comments and high-churn files → Watchlists; top-level structure → Components.
+- **Edges:** component ownership (`CONTAINS`), revert pairs (`SUPERSEDED_BY`/
+  `CAUSES`), shared issue references and co-change coupling (`RELATES_TO`).
+  `SUPERSEDED_BY` and `RELATES_TO` are new documented edge types.
+- **Provenance:** every seeded node carries `**Provenance:**` (source commits /
+  file locations) and `**Seeded:**` (extractor, confidence, content hash).
+  Both fields round-trip through the parser and MCP tools.
+- **Review gate:** nothing is written without an interactive confirm (`--yes`
+  for scripts); `--dry-run` mines and summarizes only. Quality controls:
+  `--min-confidence` floor, `--max-per-type` caps, near-duplicate collapsing.
+- **Idempotent:** stable content-derived node IDs; re-runs at the same commit
+  are no-ops, re-runs after new commits add only what's new, and hand-edited
+  seeded nodes are never overwritten (conflicts are reported).
+
+### Fixed
+
+- Importing `mcp/src/index.ts` for its exported handlers (as the tests do) no
+  longer attaches the MCP server to stdio — previously `node --test` never
+  exited. The server now starts only when `index.js` is the entry module.
+
 ## [0.2.0] — 2026-06-04
 
 ### Breaking change — Recurrence Root-Cause Gate

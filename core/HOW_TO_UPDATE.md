@@ -107,6 +107,25 @@ When the task routing table points the AI to multiple files, it should load HIGH
 | `FIXED_BY` | This regression was resolved by the target decision/node |
 | `VIOLATED_BY` | This invariant was broken by the target regression |
 | `CONTAINS` | This Watchlist or Component contains the target |
+| `SUPERSEDED_BY` | This decision was replaced/reverted by the target (mostly emitted by `sg seed`) |
+| `RELATES_TO` | Weak association — shared issue, co-change coupling (mostly emitted by `sg seed`) |
+
+### Seeded nodes
+
+Nodes created by `sg seed` (see `mcp/README.md`) carry two extra fields:
+
+```markdown
+**Provenance:** commits: `abc123def456` | locations: `src/auth.ts:41`
+**Seeded:** regression-commits@1 | confidence: 0.80 | hash: 1a2b3c4d | seed: v0.3.0
+```
+
+- **Provenance** is the audit trail — the commits/locations the node was mined from.
+- **Seeded** records the extractor, its confidence (0–1), and a content hash.
+
+You may freely edit or delete seeded nodes. The hash lets re-runs of `sg seed`
+detect your edits: **an edited seeded node is never overwritten** — the re-run
+reports a conflict and keeps your version. Don't edit the `**Seeded:**` line
+itself; delete it only if you want to claim the node as fully hand-authored.
 
 ---
 

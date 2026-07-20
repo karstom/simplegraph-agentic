@@ -32,8 +32,8 @@ while IFS= read -r f; do
   case "$(basename "$f")" in
     auto_map.md|.scratchpad.md) continue ;;
   esac
-  # Strip HTML comments from each file and append
-  perl -0777 -pe 's/<!--.*?-->//gs' < "$f" >> "${STRIPPED}"
+  # Strip HTML comments and fenced code blocks (template examples) from each file and append
+  perl -0777 -pe 's/<!--.*?-->//gs; s/^```.*?^```//gms' < "$f" >> "${STRIPPED}"
 done < <(find "$CORE_DIR" -name '*.md' -not -name 'auto_map.md' -not -name '.scratchpad.md' | sort)
 
 grep -oP '→ \K[A-Z_]+' "${STRIPPED}" 2>/dev/null | sort -u > "${EDGE_TARGETS}" || true
