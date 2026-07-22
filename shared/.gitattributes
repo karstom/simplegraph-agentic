@@ -1,0 +1,11 @@
+# simplegraph-agentic — merge behavior for the shared (org-level) graph.
+# Same rationale as core/.gitattributes: union-merge the append-only list files
+# so concurrent additions across repos merge cleanly. See that file for the
+# post-merge steps (reindex + consistency_check --shared).
+
+regressions.md                  merge=union
+invariants.md                   merge=union
+decisions.md                    merge=union
+watchlists.md                   merge=union
+anti_patterns.md                merge=union
+archive/resolved_regressions.md merge=union

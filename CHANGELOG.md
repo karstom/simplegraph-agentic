@@ -35,9 +35,26 @@ worktree-based subagents, or a team whose tools all write to the same graph.
 - **Duplicate-ID detection.** `consistency_check.sh` now fails when the same node
   ID is defined more than once — the collision two agents (or two merged branches)
   can create without git ever raising a conflict.
+- **Union-merged list files.** A shipped `core/.gitattributes` (and
+  `shared/.gitattributes`) marks the append-only node files `merge=union`, so two
+  branches that each appended a node merge cleanly instead of conflicting on every
+  add. `graph_index.md` is deliberately excluded — regenerate it with `sg reindex`
+  after a merge. `setup.sh` installs and refreshes these files.
+- **Trust boundary for the shared graph.** The MCP server was already read-only
+  against `shared/`, making promotion a deliberate human act; that control is now
+  documented, and `consistency_check.sh` is shared-aware — it auto-detects a
+  sibling `shared/` graph (or takes `--shared <dir>`), validates IDs and edges
+  across both graphs (so cross-graph edges resolve instead of reading as broken),
+  and warns when a shared node carries no attribution (`Author`/`Provenance`/
+  `Seeded`) — an org-wide rule with no traceable source.
+
+Propagation across branches follows your git workflow: a node reaches other
+agents when its branch merges, so commit graph updates alongside the code and
+land them promptly (documented in `core/HOW_TO_UPDATE.md`).
 
 All additions are backward-compatible: the node format only grows optional
-fields, and `sg seed` output is byte-identical to 0.3.0.
+fields, `sg seed` output is byte-identical to 0.3.0, and the shared-graph checks
+are inert when no `shared/` graph is present.
 
 ## [0.3.0] — 2026-07-20
 

@@ -224,11 +224,13 @@ When several agents write the graph at once — parallel Claude Code sessions, w
 | Hazard | Protection |
 |---|---|
 | **Torn / lost writes** on a shared checkout | Every write is atomic (temp-file + rename); read-modify-write tool calls hold a per-graph lock, so a `REGRESSED_N_TIMES` increment can't be silently dropped |
+| **Conflicts on every parallel append** | `core/.gitattributes` marks the node list files `merge=union`, so two branches that each added a node merge cleanly instead of colliding |
 | **`graph_index.md` merge conflicts** across branches | The Quick Index is *derived* — regenerate it with `sg reindex` instead of hand-merging; the output is sorted and order-independent, so either side resolves identically |
-| **Duplicate node IDs** from two branches | `consistency_check.sh` fails the build when one ID is defined twice |
+| **Duplicate node IDs** from two branches | `consistency_check.sh` fails the build when one ID is defined twice (across `core/` and `shared/`) |
 | **"Which agent wrote this?"** after a merge | Optional `**Author:**` / `**Session:**` fields (set `SIMPLEGRAPH_AUTHOR` / `SIMPLEGRAPH_SESSION`, or pass `author` / `session` to `add_node`) record provenance for arbitration |
+| **A wrong node becoming org-wide law** | The MCP server is read-only against `shared/`, so promotion is a deliberate, human-reviewed act; `consistency_check.sh` validates the shared graph and warns on untraceable org-wide nodes |
 
-Because a graph node is agent-authored text that other agents later load as guidance, commit graph updates promptly and keep them in the PR diff where a human reviews them — the same trust boundary a shared `shared/` graph relies on. See [`mcp/README.md`](mcp/README.md#multi-agent-development) for the full mechanism.
+Propagation is not instant: an agent's node reaches others only when its branch merges, so commit graph updates in the same commit as the code and land them promptly. Because a graph node is agent-authored text that other agents later load as guidance, keep it in the PR diff where a human reviews it — the same trust boundary a shared `shared/` graph relies on. See [`mcp/README.md`](mcp/README.md#multi-agent-development) for the full mechanism.
 
 ---
 

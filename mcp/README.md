@@ -283,9 +283,12 @@ With MCP configured, a well-tuned agent will:
 ## Multi-agent development
 
 The graph is plain markdown in git, mutated by a short-lived server process per
-agent session. When several sessions share one checkout — parallel Claude Code
-runs, worktree subagents, a team whose tools all write the graph — the server
-keeps writes safe:
+agent session. Concurrency shows up in two forms — several sessions on one
+checkout, and several branches/worktrees that merge later. Both are handled.
+
+### On a shared checkout
+
+When sessions share one working copy, the server keeps writes safe:
 
 - **Atomic writes.** Every write is a temp-file-plus-rename, so another session
   never reads a half-written node file.
@@ -295,21 +298,53 @@ keeps writes safe:
   reading `REGRESSED_N_TIMES = N` and both writing `N+1` — the lost-update race
   that would silently drop a recurrence. A lock left by a crashed process is
   reclaimed automatically after a few seconds.
-- **Derived Quick Index.** `graph_index.md` is regenerated from the node files
-  rather than appended to, so it's deterministic and order-independent. After a
-  git merge where two branches both touched it, run `sg reindex` (or the
-  `simplegraph_reindex` tool) to resolve the conflict mechanically.
+
+### Across branches and worktrees
+
+When agents work on parallel branches, the graph diverges and merges later. Two
+things keep that friction low so graph updates don't get deferred:
+
+- **Union-merged list files.** `core/.gitattributes` marks the append-only node
+  files (`regressions.md`, `invariants.md`, `decisions.md`, `watchlists.md`,
+  `anti_patterns.md`, and the archive) as `merge=union` — a built-in git driver,
+  no config needed. Two branches that each appended a node then merge cleanly
+  instead of conflicting on every add.
+- **Derived Quick Index.** `graph_index.md` is *not* union-merged (it's a table);
+  it's regenerated from the node files. After a merge, run `sg reindex` (or the
+  `simplegraph_reindex` tool) — the output is sorted and order-independent, so
+  both sides resolve to the same index. `components/*.md` is one node per file,
+  so parallel work touches different files.
+- **Propagation is not instant.** An agent's node reaches other agents only when
+  its branch merges. Commit graph updates in the *same commit* as the code and
+  land them promptly; `git fetch` before starting parallel work so you begin from
+  the current graph. This is convention, not enforcement — the graph is a git
+  artifact and follows your git workflow.
+- **After any graph merge:** `sg reindex` then `core/scripts/consistency_check.sh`
+  — the latter catches duplicate IDs a union merge can produce when two branches
+  minted the same ID (git raises no conflict for that on its own).
+
+### Attribution and the trust boundary
+
+A graph node is agent-authored text that other agents later load as *guidance* —
+so a wrong node (a hallucinated "invariant") would be obeyed by every agent that
+reads it. The controls:
+
+- **It's in the diff.** Graph writes land in `core/` in the same commit as the
+  code, so every node change shows up in code review like any other change. Keep
+  it that way — review graph changes, don't rubber-stamp them.
 - **Attribution.** Set `SIMPLEGRAPH_AUTHOR`/`SIMPLEGRAPH_SESSION` (or pass
   `author`/`session` to `add_node`) so each node records which agent and session
-  created it — useful for arbitrating conflicting nodes after a merge.
-- **Duplicate-ID guard.** `core/scripts/consistency_check.sh` fails if two nodes
-  share an ID (the collision two branches can create without a git conflict). Run
-  it in CI or a pre-commit hook.
-
-For work that spans parallel branches, commit graph updates promptly and keep
-them reviewable in the diff — a graph node is agent-authored text that other
-agents will later load as guidance, so it belongs in code review like any other
-change.
+  created it — the signal for arbitrating conflicting nodes after a merge.
+- **Duplicate-ID guard.** `consistency_check.sh` fails if two nodes share an ID.
+  Run it in CI or a pre-commit hook.
+- **The `shared/` tier is highest-stakes.** A shared node is loaded by *every*
+  repo and agent in the org. The server is **read-only** against `SIMPLEGRAPH_SHARED`
+  — no agent can write it — so promoting a node to `shared/` is always a
+  deliberate human act (copy the node, commit, review). Treat those PRs with more
+  scrutiny than per-repo graph changes. `consistency_check.sh` auto-detects a
+  sibling `shared/` graph (or take `--shared <dir>`), validates its edges and IDs
+  alongside `core/`, and warns when a shared node carries no attribution — an
+  org-wide rule with no traceable source.
 
 ## Recommended: use both MCP and the adapter
 
