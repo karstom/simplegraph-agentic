@@ -1,5 +1,44 @@
 # Changelog
 
+## [0.4.0] — 2026-07-22
+
+### Multi-agent development safety
+
+Hardens the graph for concurrent writers — parallel Claude Code sessions,
+worktree-based subagents, or a team whose tools all write to the same graph.
+
+- **Atomic writes.** Every graph write now goes through a temp-file-plus-rename,
+  so a reader in another session can never observe a half-written node file.
+- **Cross-process graph lock.** Read-modify-write tool calls
+  (`simplegraph_update_node`, `simplegraph_add_node`, `simplegraph_archive_regression`,
+  scratchpad append) now hold a single advisory lock per graph root for the whole
+  operation. This closes the lost-update race where two sessions both read
+  `REGRESSED_N_TIMES = N` and both write `N+1`, silently dropping a recurrence —
+  the one signal the graph most needs to keep. Stale locks (crashed holder) are
+  detected by timestamp and reclaimed; the lock is always released, including on
+  error.
+- **Derived, regenerable Quick Index.** `graph_index.md`'s Quick Index is now
+  treated as a *view* of the node files, not a hand-appended list. A new
+  `sg reindex` command and `simplegraph_reindex` tool rebuild it deterministically
+  (IDs sorted, recurring regressions annotated `(×N)`), leaving the Task Routing
+  section untouched. Because the output is order-independent, this is the intended
+  way to resolve `graph_index.md` merge conflicts after parallel branches. Adding
+  or archiving a node now regenerates the index automatically — the manual
+  `simplegraph_update_index` step is no longer required (the tool remains, now an
+  alias for reindex).
+- **Author/Session attribution.** Nodes may carry `**Author:**` and `**Session:**`
+  fields recording which agent/tool and session created them, so concurrent or
+  conflicting writes can be told apart and arbitrated. `simplegraph_add_node`
+  accepts `author`/`session` arguments and falls back to the `SIMPLEGRAPH_AUTHOR`
+  and `SIMPLEGRAPH_SESSION` environment variables. Fields are optional and omitted
+  when unset, so existing nodes and seeded output are unchanged.
+- **Duplicate-ID detection.** `consistency_check.sh` now fails when the same node
+  ID is defined more than once — the collision two agents (or two merged branches)
+  can create without git ever raising a conflict.
+
+All additions are backward-compatible: the node format only grows optional
+fields, and `sg seed` output is byte-identical to 0.3.0.
+
 ## [0.3.0] — 2026-07-20
 
 ### New: `sg seed` — bootstrap a graph from repository history

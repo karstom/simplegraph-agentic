@@ -13,6 +13,10 @@ export interface GraphNode {
   edges: string[];
   files: string[];
   lastUpdated: string;
+  /** Who created the node — an agent/tool name or human, for multi-agent attribution. */
+  author?: string;
+  /** Session identifier the node was created in, for arbitrating concurrent writes. */
+  session?: string;
   /** Present on nodes written by `sg seed`: "<extractor>@<ver> | confidence: N | hash: H". */
   seeded?: string;
   /** Present on seeded nodes: commits and file locations the node was mined from. */
@@ -63,6 +67,8 @@ export function parseNodes(content: string, sourceFile: string): GraphNode[] {
       edges,
       files,
       lastUpdated: get("LastUpdated"),
+      author: get("Author") || undefined,
+      session: get("Session") || undefined,
       seeded: get("Seeded") || undefined,
       provenance: get("Provenance") || undefined,
       rawContent: section,
@@ -99,6 +105,8 @@ export function formatNode(
   }
   lines.push(`**Files:** ${node.files.length > 0 ? node.files.map(f => `\`${f}\``).join(", ") : "_(none)_"}`);
   lines.push(`**LastUpdated:** ${node.lastUpdated}`);
+  if (node.author) lines.push(`**Author:** ${node.author}`);
+  if (node.session) lines.push(`**Session:** ${node.session}`);
   if (node.provenance) lines.push(`**Provenance:** ${node.provenance}`);
   if (node.seeded) lines.push(`**Seeded:** ${node.seeded}`);
   return lines.join("\n");

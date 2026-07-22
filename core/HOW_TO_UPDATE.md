@@ -18,7 +18,13 @@ You SHOULD update a node when:
 - A new edge relationship between nodes is discovered
 - A summary becomes inaccurate
 
-**Always update `graph_index.md`** when adding a new node to ensure it appears in the Quick Index.
+**The Quick Index in `graph_index.md` is derived from the node files.** If you use
+`simplegraph_add_node` / `simplegraph_archive_regression`, it is regenerated for
+you automatically. If you hand-edit node files, regenerate it with `sg reindex`
+(or the `simplegraph_reindex` tool) rather than editing the table by hand — the
+output is sorted and order-independent, which keeps it stable across parallel
+branches. Only the Quick Index rows are rewritten; the Task Routing section is
+left untouched.
 
 ---
 
@@ -66,6 +72,17 @@ For Regression nodes, add:
 ```
 **REGRESSED_N_TIMES:** 1
 ```
+
+In multi-agent setups, a node may also carry attribution — who created it and in
+which session — so concurrent or conflicting nodes can be told apart after a
+merge:
+```
+**Author:** agent-name-or-human
+**Session:** session-id
+```
+These are optional. `simplegraph_add_node` stamps them from its `author`/`session`
+arguments, or from the `SIMPLEGRAPH_AUTHOR` / `SIMPLEGRAPH_SESSION` environment
+variables. Omit them for solo work.
 
 ### Tags
 
@@ -146,7 +163,9 @@ The graph is designed to minimize merge conflicts on teams:
 
 - **`components/` — one file per node.** Two people editing different components never conflict.
 - **Multi-node files** (`invariants.md`, `regressions.md`, `decisions.md`, `watchlists.md`) — each node is a self-contained block separated by `---`. **Always append new nodes at the bottom.** Git merges two appends cleanly.
-- **`graph_index.md`** — the only file where conflicts are possible (when two people add a node to the same index table simultaneously). Resolution is trivial: accept both new rows.
+- **`graph_index.md`** — the Quick Index is derived, so don't hand-resolve a conflict here. Accept either side of the conflict (or take `--theirs`/`--ours`), then run `sg reindex` to rebuild it from the node files. Because the output is sorted and order-independent, both contributors end up with byte-identical indexes.
+- **Concurrent writers on one checkout** — when two agent sessions share a working copy (not separate branches), the MCP server serializes their writes with a per-graph lock and writes atomically, so a lost `REGRESSED_N_TIMES` increment or a torn file can't happen. No manual coordination needed.
+- **Duplicate IDs** — if a merge lands two nodes with the same ID (each branch minted it independently), `consistency_check.sh` fails and names the ID. Rename one or merge the two blocks, then `sg reindex`.
 - **Scratchpad** (`core/.scratchpad.md`) — gitignored, so never conflicts.
 
 > **Large teams (5+ contributors):** If multi-node files still cause frequent conflicts,

@@ -25,8 +25,15 @@ Use both: keep the skill/CLAUDE.md as a session-start summary and use MCP for mi
 | `simplegraph_check_files` | **Before editing any file** | Returns regressions, watchlists, invariants that reference those files |
 | `simplegraph_anti_patterns` | Before generating code | Returns the anti-patterns list |
 | `simplegraph_search` | When looking for context by keyword | Searches IDs, labels, summaries, edges, file references |
-| `simplegraph_add_node` | After fixing a bug / making a decision | Appends a new node to the correct file |
+| `simplegraph_add_node` | After fixing a bug / making a decision | Appends a new node (optionally stamped with `author`/`session`) and regenerates the Quick Index |
 | `simplegraph_update_node` | When a bug recurs | Increments `REGRESSED_N_TIMES`, auto-upgrades priority to HIGH at ≥2 |
+| `simplegraph_reindex` | After a git merge or manual edit | Rebuilds the Quick Index from the node files, deterministically |
+| `simplegraph_archive_regression` | When a bug is permanently fixed | Moves a Regression to the archive and refreshes the index |
+
+Writes are safe under concurrent agents: every graph mutation is atomic
+(temp-file + rename) and read-modify-write tool calls hold a per-graph advisory
+lock, so parallel sessions can't lose each other's updates. See
+[Multi-agent development](#multi-agent-development).
 
 ## Installation
 
@@ -49,6 +56,16 @@ interactive confirm / `--yes`). See the root README for the full flag list.
 ```bash
 npm link          # or: node dist/seed/cli.js seed --help
 sg seed /path/to/your/project --dry-run
+```
+
+The `sg` bin also provides `sg reindex`, which regenerates `graph_index.md`'s
+Quick Index from the current node files. Because the output is sorted and
+order-independent, it's the intended way to resolve a `graph_index.md` merge
+conflict after two branches both added nodes: take either side, then run
+`sg reindex`.
+
+```bash
+sg reindex /path/to/your/project     # or: node dist/seed/cli.js reindex --help
 ```
 
 ## Configuration
@@ -249,6 +266,8 @@ If your team uses a `shared/` graph (see simplegraph's multi-repo feature), add
 |---|---|---|
 | `SIMPLEGRAPH_ROOT` | `./core` (relative to cwd) | Path to your project's `core/` directory |
 | `SIMPLEGRAPH_SHARED` | _(none)_ | Optional: path to shared team graph `core/` — merged into all read operations |
+| `SIMPLEGRAPH_AUTHOR` | _(none)_ | Optional: default `Author` stamped on nodes this server creates (agent/tool name). Per-call `author` argument overrides it. |
+| `SIMPLEGRAPH_SESSION` | _(none)_ | Optional: default `Session` stamped on nodes this server creates. Per-call `session` argument overrides it. |
 
 ## Example agent workflow
 
@@ -258,8 +277,39 @@ With MCP configured, a well-tuned agent will:
 2. Call `simplegraph_check_files(["DuckDBProvider.ts"])` → get 8 relevant nodes before touching the file
 3. Call `simplegraph_nodes("regressions")` → read active regression details
 4. Make the code change
-5. Call `simplegraph_add_node(...)` → record the fix
+5. Call `simplegraph_add_node(...)` → record the fix (the Quick Index is regenerated automatically — no separate index call needed)
 6. Call `simplegraph_update_node({id:"REG_X", field:"REGRESSED_N_TIMES", value:"increment"})` if it recurred
+
+## Multi-agent development
+
+The graph is plain markdown in git, mutated by a short-lived server process per
+agent session. When several sessions share one checkout — parallel Claude Code
+runs, worktree subagents, a team whose tools all write the graph — the server
+keeps writes safe:
+
+- **Atomic writes.** Every write is a temp-file-plus-rename, so another session
+  never reads a half-written node file.
+- **Per-graph lock.** `add_node`, `update_node`, `archive_regression`, and
+  scratchpad appends hold one advisory lock (`.sg.lock` in the graph root) across
+  the whole read-modify-write. This is what prevents two sessions from both
+  reading `REGRESSED_N_TIMES = N` and both writing `N+1` — the lost-update race
+  that would silently drop a recurrence. A lock left by a crashed process is
+  reclaimed automatically after a few seconds.
+- **Derived Quick Index.** `graph_index.md` is regenerated from the node files
+  rather than appended to, so it's deterministic and order-independent. After a
+  git merge where two branches both touched it, run `sg reindex` (or the
+  `simplegraph_reindex` tool) to resolve the conflict mechanically.
+- **Attribution.** Set `SIMPLEGRAPH_AUTHOR`/`SIMPLEGRAPH_SESSION` (or pass
+  `author`/`session` to `add_node`) so each node records which agent and session
+  created it — useful for arbitrating conflicting nodes after a merge.
+- **Duplicate-ID guard.** `core/scripts/consistency_check.sh` fails if two nodes
+  share an ID (the collision two branches can create without a git conflict). Run
+  it in CI or a pre-commit hook.
+
+For work that spans parallel branches, commit graph updates promptly and keep
+them reviewable in the diff — a graph node is agent-authored text that other
+agents will later load as guidance, so it belongs in code review like any other
+change.
 
 ## Recommended: use both MCP and the adapter
 

@@ -16,6 +16,7 @@ import * as readline from "readline";
 import { buildContext } from "./mine.js";
 import { assembleBundle } from "./bundle.js";
 import { mergeBundle, readState, DRAFT_FILE } from "./merge.js";
+import { regenerateIndex } from "../reindex.js";
 import {
   DEFAULT_MAX_COMMITS, DEFAULT_MAX_PER_TYPE, DEFAULT_MIN_CONFIDENCE,
   NODE_TYPES, SEED_VERSION,
@@ -97,6 +98,52 @@ export function parseArgs(argv: string[]): SeedOptions & { help: boolean; graphE
   if (!Number.isInteger(opts.maxPerType) || opts.maxPerType < 1) throw new Error("--max-per-type must be a positive integer");
   if (!Number.isInteger(opts.maxCommits) || opts.maxCommits < 1) throw new Error("--max-commits must be a positive integer");
   return opts;
+}
+
+const REINDEX_USAGE = `sg reindex [--graph <path>] — regenerate graph_index.md's Quick Index from the node files
+
+The Quick Index is a derived view of the nodes. Regenerating it (rather than
+hand-editing) keeps it deterministic and order-independent, which is the
+intended way to resolve index merge conflicts after parallel agents or branches
+both touched it. Node files are the source of truth and are never modified.
+
+Usage:
+  sg reindex [PATH] [--graph <path>]   PATH: repo root (default: cwd; graph defaults to PATH/core)
+  -h, --help                           show this help
+`;
+
+export async function runReindex(argv: string[]): Promise<number> {
+  const args = [...argv];
+  let repoPath = process.cwd();
+  let graphRoot = "";
+  while (args.length) {
+    const a = args.shift()!;
+    if (a === "-h" || a === "--help") { process.stdout.write(REINDEX_USAGE); return 0; }
+    if (a === "--graph") {
+      const v = args.shift();
+      if (v === undefined) throw new Error("--graph requires a value");
+      graphRoot = path.resolve(v);
+    } else if (a.startsWith("-")) {
+      throw new Error(`Unknown option: ${a}\n\n${REINDEX_USAGE}`);
+    } else {
+      repoPath = path.resolve(a);
+    }
+  }
+  if (!graphRoot) graphRoot = path.join(repoPath, "core");
+
+  if (!fs.existsSync(path.join(graphRoot, "graph_index.md"))) {
+    process.stderr.write(
+      `graph_index.md not found in ${graphRoot}.\n` +
+      `Pass --graph <path> to your core/ directory, or run setup.sh to install simplegraph.\n`
+    );
+    return 1;
+  }
+
+  const result = regenerateIndex(graphRoot);
+  process.stdout.write(`✓ Regenerated ${path.join(graphRoot, "graph_index.md")} — ${result.total} node(s) indexed:\n`);
+  for (const r of result.rows) process.stdout.write(`    ${r.label.padEnd(26)} ${r.count}\n`);
+  for (const w of result.warnings) process.stdout.write(`    ⚠ ${w}\n`);
+  return 0;
 }
 
 function bar(confidence: number): string {
@@ -221,14 +268,21 @@ export async function runSeed(argv: string[]): Promise<number> {
 const invoked = process.argv[1] ?? "";
 if (/\b(sg|cli)(\.js|\.ts)?$/.test(path.basename(invoked))) {
   const [command, ...rest] = process.argv.slice(2);
+  const runFail = (e: unknown) => {
+    process.stderr.write(`Error: ${(e as Error).message}\n`);
+    process.exit(1);
+  };
   if (!command || command === "-h" || command === "--help") {
-    process.stdout.write(`sg — simplegraph CLI\n\nCommands:\n  seed    ${USAGE.split("\n")[0]}\n\n${USAGE}`);
+    process.stdout.write(
+      `sg — simplegraph CLI\n\nCommands:\n` +
+      `  seed     ${USAGE.split("\n")[0]}\n` +
+      `  reindex  ${REINDEX_USAGE.split("\n")[0]}\n\n${USAGE}`
+    );
     process.exit(command ? 0 : 1);
   } else if (command === "seed") {
-    runSeed(rest).then(code => process.exit(code)).catch(e => {
-      process.stderr.write(`Error: ${(e as Error).message}\n`);
-      process.exit(1);
-    });
+    runSeed(rest).then(code => process.exit(code)).catch(runFail);
+  } else if (command === "reindex") {
+    runReindex(rest).then(code => process.exit(code)).catch(runFail);
   } else {
     process.stderr.write(`Unknown command: ${command}\n\n${USAGE}`);
     process.exit(1);

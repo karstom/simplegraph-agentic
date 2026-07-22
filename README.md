@@ -196,7 +196,7 @@ The graph only stays useful if it's updated when code changes.
 
 | Task | Mechanism |
 |---|---|
-| **Edge consistency** (`consistency_check.sh`) | CI required status check — enforced on every PR |
+| **Edge consistency & duplicate IDs** (`consistency_check.sh`) | CI required status check — enforced on every PR |
 | **Structural map** (`auto_map.sh`) | Git pre-commit hook — automatic, local |
 | **Node updates** (regressions, decisions, etc.) | Anchor to a merge checklist the agent already follows |
 
@@ -214,6 +214,21 @@ jobs:
 ```
 
 **Node updates** grow naturally: fix a bug → add a Regression node in the same commit. Notice a bug recurs → call `simplegraph_update_node` to increment `REGRESSED_N_TIMES`. The graph improves through real usage — low quality at seed time is fine.
+
+---
+
+## Multi-agent development
+
+When several agents write the graph at once — parallel Claude Code sessions, worktree-based subagents, or a whole team — two failure modes appear that a single-agent setup never hits: concurrent writers racing on the same checkout, and parallel branches diverging before they merge. The MCP server and tooling handle both:
+
+| Hazard | Protection |
+|---|---|
+| **Torn / lost writes** on a shared checkout | Every write is atomic (temp-file + rename); read-modify-write tool calls hold a per-graph lock, so a `REGRESSED_N_TIMES` increment can't be silently dropped |
+| **`graph_index.md` merge conflicts** across branches | The Quick Index is *derived* — regenerate it with `sg reindex` instead of hand-merging; the output is sorted and order-independent, so either side resolves identically |
+| **Duplicate node IDs** from two branches | `consistency_check.sh` fails the build when one ID is defined twice |
+| **"Which agent wrote this?"** after a merge | Optional `**Author:**` / `**Session:**` fields (set `SIMPLEGRAPH_AUTHOR` / `SIMPLEGRAPH_SESSION`, or pass `author` / `session` to `add_node`) record provenance for arbitration |
+
+Because a graph node is agent-authored text that other agents later load as guidance, commit graph updates promptly and keep them in the PR diff where a human reviews them — the same trust boundary a shared `shared/` graph relies on. See [`mcp/README.md`](mcp/README.md#multi-agent-development) for the full mechanism.
 
 ---
 

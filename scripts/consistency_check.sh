@@ -39,13 +39,28 @@ done < <(find "$CORE_DIR" -name '*.md' -not -name 'auto_map.md' -not -name '.scr
 grep -oP '→ \K[A-Z_]+' "${STRIPPED}" 2>/dev/null | sort -u > "${EDGE_TARGETS}" || true
 grep -oP '## NODE: \K[A-Z_]+' "${STRIPPED}" 2>/dev/null | sort -u > "${NODE_IDS}" || true
 
-BROKEN=$(comm -23 "${EDGE_TARGETS}" "${NODE_IDS}")
+STATUS=0
 
-if [ -z "$BROKEN" ]; then
-  echo "✓ All edge references are valid."
-  exit 0
-else
+# 1. Duplicate node IDs. Two agents (or two merged branches) can independently
+#    mint the same ID; git merges the files with no conflict, leaving an
+#    ambiguous graph. Flag any ID that appears in more than one NODE block.
+DUPES=$(grep -oP '## NODE: \K[A-Z_]+' "${STRIPPED}" 2>/dev/null | sort | uniq -d || true)
+if [ -n "$DUPES" ]; then
+  echo "✗ Duplicate node IDs found (same ID defined more than once):"
+  echo "$DUPES"
+  echo "  Rename one, or merge the two definitions into a single NODE block, then re-run 'sg reindex'."
+  STATUS=1
+fi
+
+# 2. Broken edge references (targets with no matching NODE).
+BROKEN=$(comm -23 "${EDGE_TARGETS}" "${NODE_IDS}")
+if [ -n "$BROKEN" ]; then
   echo "✗ Broken edge references found (targets with no matching NODE):"
   echo "$BROKEN"
-  exit 1
+  STATUS=1
 fi
+
+if [ "$STATUS" -eq 0 ]; then
+  echo "✓ All edge references are valid and all node IDs are unique."
+fi
+exit "$STATUS"
