@@ -98,6 +98,11 @@ for script in consistency_check.sh stale_check.sh auto_map.sh auto_map_shared.sh
 done
 chmod +x "${TARGET}/core/scripts/"*.sh 2>/dev/null || true
 
+# Always refresh .gitattributes — it's merge policy (union-merge the node list
+# files), not graph data. Safe to overwrite on upgrade.
+[ -f "${SCRIPT_DIR}/core/.gitattributes" ] && cp "${SCRIPT_DIR}/core/.gitattributes" "${TARGET}/core/.gitattributes"
+[ -d "${TARGET}/shared" ] && [ -f "${SCRIPT_DIR}/shared/.gitattributes" ] && cp "${SCRIPT_DIR}/shared/.gitattributes" "${TARGET}/shared/.gitattributes"
+
 if [ "${UPGRADE_MODE}" = false ]; then
   ok "core/ installed at ${TARGET}/core/ (including core/scripts/)"
 else

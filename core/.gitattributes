@@ -1,0 +1,22 @@
+# simplegraph-agentic — merge behavior for the graph.
+#
+# Parallel agents and feature branches append nodes to these list files. A
+# plain merge conflicts on nearly every concurrent add, which pushes people to
+# defer graph updates — the opposite of what the graph needs. `merge=union` is
+# a built-in git driver (no config required) that keeps BOTH sides' lines, so
+# two branches that each appended a node merge cleanly.
+#
+# After any merge that touched these files, run:
+#   sg reindex                          # rebuild the derived Quick Index
+#   core/scripts/consistency_check.sh   # catches any duplicate IDs union produced
+#
+# NOT union-merged, on purpose:
+#   graph_index.md   — a derived table; regenerate it with `sg reindex` instead.
+#   components/*.md   — one node per file, so branches touch different files.
+
+regressions.md                  merge=union
+invariants.md                   merge=union
+decisions.md                    merge=union
+watchlists.md                   merge=union
+anti_patterns.md                merge=union
+archive/resolved_regressions.md merge=union

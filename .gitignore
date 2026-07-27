@@ -3,3 +3,12 @@
 core/auto_map.md
 core/.scratchpad.md
 shared/auto_map.md
+
+# sg seed working files — the draft awaits review; the state file is local
+core/.seed_draft.json
+core/.seed_state.json
+
+# Transient concurrency artifacts — created and removed within one write; never commit
+core/.sg.lock
+shared/.sg.lock
+.*.tmp

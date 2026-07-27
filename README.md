@@ -70,8 +70,48 @@ The installer copies `core/` into your project, installs the right adapter for y
 
 1. Copy `core/` into your project root.
 2. Pick an adapter from `adapters/` — see the [Adapter Matrix](#adapter-matrix) below.
-3. Run `scripts/seed_prompt.md` in your AI tool to bootstrap the graph.
+3. Bootstrap the graph: run `sg seed` (below) or `scripts/seed_prompt.md` in your AI tool.
 4. Commit `core/`.
+
+---
+
+## `sg seed` — bootstrap the graph from your repo's history
+
+A new graph doesn't have to start empty. Everything it wants to store is already
+latent in your repository: reverted and repeatedly-fixed files are regressions,
+merge bodies and ADRs are decisions, emphatic comments and rule-shaped test names
+are invariants, TODO/FIXME markers and high-churn files are watchlists, and your
+directory structure is the component map. `sg seed` mines all of it —
+**deterministically, offline, no API key** — into a draft you review before
+anything is written.
+
+```bash
+cd mcp && npm install && npm run build && npm link   # installs the `sg` bin
+cd /path/to/your/project
+sg seed --dry-run     # mine and summarize, write nothing
+sg seed               # mine, review the summary, confirm the merge
+```
+
+```
+sg seed [PATH]
+  --dry-run              mine and summarize, write nothing
+  --since <ref|date>     history window (default: last 500 commits)
+  --min-confidence <n>   drop draft nodes below threshold (default 0.5)
+  --types <list>         restrict to given node types
+  --max-per-type <n>     cap per type (default 15)
+  --output <path>        write the draft bundle here
+  --yes                  skip the interactive confirm
+```
+
+Every seeded node carries **provenance** (the commits and file locations it was
+mined from) plus a confidence score, so you can audit — and delete — anything
+that reads as noise. Re-running is safe: output is idempotent at the same
+commit, re-runs after new commits add only what's new, and a seeded node you've
+hand-edited is never overwritten (the conflict is reported instead). See the
+"Seeded nodes" section of `core/HOW_TO_UPDATE.md`.
+
+`scripts/seed_prompt.md` remains the LLM-assisted alternative: richer summaries,
+but non-deterministic and model-dependent. `sg seed` is the reproducible baseline.
 
 ---
 
@@ -156,7 +196,7 @@ The graph only stays useful if it's updated when code changes.
 
 | Task | Mechanism |
 |---|---|
-| **Edge consistency** (`consistency_check.sh`) | CI required status check — enforced on every PR |
+| **Edge consistency & duplicate IDs** (`consistency_check.sh`) | CI required status check — enforced on every PR |
 | **Structural map** (`auto_map.sh`) | Git pre-commit hook — automatic, local |
 | **Node updates** (regressions, decisions, etc.) | Anchor to a merge checklist the agent already follows |
 
@@ -174,6 +214,23 @@ jobs:
 ```
 
 **Node updates** grow naturally: fix a bug → add a Regression node in the same commit. Notice a bug recurs → call `simplegraph_update_node` to increment `REGRESSED_N_TIMES`. The graph improves through real usage — low quality at seed time is fine.
+
+---
+
+## Multi-agent development
+
+When several agents write the graph at once — parallel Claude Code sessions, worktree-based subagents, or a whole team — two failure modes appear that a single-agent setup never hits: concurrent writers racing on the same checkout, and parallel branches diverging before they merge. The MCP server and tooling handle both:
+
+| Hazard | Protection |
+|---|---|
+| **Torn / lost writes** on a shared checkout | Every write is atomic (temp-file + rename); read-modify-write tool calls hold a per-graph lock, so a `REGRESSED_N_TIMES` increment can't be silently dropped |
+| **Conflicts on every parallel append** | `core/.gitattributes` marks the node list files `merge=union`, so two branches that each added a node merge cleanly instead of colliding |
+| **`graph_index.md` merge conflicts** across branches | The Quick Index is *derived* — regenerate it with `sg reindex` instead of hand-merging; the output is sorted and order-independent, so either side resolves identically |
+| **Duplicate node IDs** from two branches | `consistency_check.sh` fails the build when one ID is defined twice (across `core/` and `shared/`) |
+| **"Which agent wrote this?"** after a merge | Optional `**Author:**` / `**Session:**` fields (set `SIMPLEGRAPH_AUTHOR` / `SIMPLEGRAPH_SESSION`, or pass `author` / `session` to `add_node`) record provenance for arbitration |
+| **A wrong node becoming org-wide law** | The MCP server is read-only against `shared/`, so promotion is a deliberate, human-reviewed act; `consistency_check.sh` validates the shared graph and warns on untraceable org-wide nodes |
+
+Propagation is not instant: an agent's node reaches others only when its branch merges, so commit graph updates in the same commit as the code and land them promptly. Because a graph node is agent-authored text that other agents later load as guidance, keep it in the PR diff where a human reviews it — the same trust boundary a shared `shared/` graph relies on. See [`mcp/README.md`](mcp/README.md#multi-agent-development) for the full mechanism.
 
 ---
 

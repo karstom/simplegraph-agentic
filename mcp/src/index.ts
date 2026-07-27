@@ -18,6 +18,8 @@ import {
 import * as fs from "fs";
 import * as path from "path";
 import { parseNodes, formatNode, type GraphNode } from "./parser.js";
+import { atomicWriteFileSync, withGraphLock } from "./fsutil.js";
+import { regenerateIndex } from "./reindex.js";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -29,6 +31,13 @@ const GRAPH_ROOT = process.env.SIMPLEGRAPH_ROOT
 const SHARED_ROOT = process.env.SIMPLEGRAPH_SHARED
   ? path.resolve(process.env.SIMPLEGRAPH_SHARED)
   : null;
+
+// Multi-agent attribution. When set, every node this server creates is stamped
+// with who made it and in which session, so concurrent or conflicting writes
+// from different agents can be told apart and arbitrated later. Both optional —
+// tool arguments override these per call.
+const DEFAULT_AUTHOR = process.env.SIMPLEGRAPH_AUTHOR || undefined;
+const DEFAULT_SESSION = process.env.SIMPLEGRAPH_SESSION || undefined;
 
 // ── File I/O ──────────────────────────────────────────────────────────────────
 
@@ -42,9 +51,8 @@ function readGraphFile(name: string, root: string = GRAPH_ROOT): string {
 
 function writeGraphFile(name: string, content: string, root: string = GRAPH_ROOT): void {
   // Writes always go to the primary project root, never the shared root.
-  const fullPath = path.join(root, name);
-  fs.mkdirSync(path.dirname(fullPath), { recursive: true });
-  fs.writeFileSync(fullPath, content, "utf-8");
+  // Atomic (temp + rename) so a concurrent reader never sees a torn file.
+  atomicWriteFileSync(path.join(root, name), content);
 }
 
 function getNodesFromRoot(root: string, tag?: string): GraphNode[] {
@@ -184,6 +192,17 @@ export function handleUpdateNode(
   graphRoot: string,
   sharedRoot: string | null = null
 ): ToolResult {
+  // Hold the graph lock across the whole read-modify-write. Without it, two
+  // agents incrementing REGRESSED_N_TIMES can both read N and both write N+1,
+  // losing a recurrence — the one count the graph most needs to keep.
+  return withGraphLock(graphRoot, () => handleUpdateNodeLocked(args, graphRoot, sharedRoot));
+}
+
+function handleUpdateNodeLocked(
+  args: { id: string; field: string; value: string; root_cause?: string },
+  graphRoot: string,
+  sharedRoot: string | null
+): ToolResult {
   const { id, field, value, root_cause } = args;
 
   const localNodes = getNodesFromRoot(graphRoot);
@@ -234,7 +253,7 @@ export function handleUpdateNode(
       content = insertRootCauseInContent(content, id, rc);
     }
 
-    fs.writeFileSync(filePath, content);
+    atomicWriteFileSync(filePath, content);
 
     const upgraded = next >= 2 ? " (Priority auto-upgraded to HIGH)" : "";
     const gateNote = rc ? ". Root-Cause Gate satisfied — RootCause field written." : ".";
@@ -247,7 +266,7 @@ export function handleUpdateNode(
     return fail(`Field **${field}:** not found in NODE: ${id}. Check the field name.`);
   }
   content = content.replace(fieldPattern, `$1${resolvedValue}`);
-  fs.writeFileSync(filePath, content);
+  atomicWriteFileSync(filePath, content);
   return ok(`✓ Updated **${field}** for NODE: ${id} → "${resolvedValue}" in ${node.sourceFile}.`);
 }
 
@@ -256,11 +275,12 @@ export function handleAddNode(
     type: string; id: string; label: string; summary: string; priority: string;
     tags?: string[]; files?: string[]; edges?: string[];
     regressedNTimes?: number; root_cause?: string;
+    author?: string; session?: string;
   },
   graphRoot: string,
   sharedRoot: string | null = null
 ): ToolResult {
-  const { type, id, label, summary, priority, tags = [], files = [], edges = [], regressedNTimes, root_cause } = args;
+  const { type, id, regressedNTimes, root_cause } = args;
 
   // Gate: creating a Regression with regressedNTimes >= 2 (re-importing history) requires root_cause
   if (type.toLowerCase() === "regression" && regressedNTimes !== undefined && regressedNTimes >= 2) {
@@ -269,6 +289,27 @@ export function handleAddNode(
       return ok(buildGateMessage(id, regressedNTimes));
     }
   }
+
+  // Serialize the read-check-append against other writers so two agents can't
+  // both pass the ID-uniqueness check and append a colliding node.
+  return withGraphLock(graphRoot, () => handleAddNodeLocked(args, graphRoot, sharedRoot));
+}
+
+function handleAddNodeLocked(
+  args: {
+    type: string; id: string; label: string; summary: string; priority: string;
+    tags?: string[]; files?: string[]; edges?: string[];
+    regressedNTimes?: number; root_cause?: string;
+    author?: string; session?: string;
+  },
+  graphRoot: string,
+  sharedRoot: string | null
+): ToolResult {
+  const {
+    type, id, label, summary, priority,
+    tags = [], files = [], edges = [], regressedNTimes, root_cause,
+    author, session,
+  } = args;
 
   const localNodes = getNodesFromRoot(graphRoot);
   const sharedNodes = sharedRoot ? getNodesFromRoot(sharedRoot, "shared") : [];
@@ -291,7 +332,13 @@ export function handleAddNode(
 
   const rc = root_cause?.trim() || undefined;
   const today = new Date().toISOString().slice(0, 10);
-  const nodeText = formatNode({ id, type, priority, label, summary, tags, files, edges, lastUpdated: today, regressedNTimes, rootCause: rc });
+  const resolvedAuthor = author?.trim() || DEFAULT_AUTHOR;
+  const resolvedSession = session?.trim() || DEFAULT_SESSION;
+  const nodeText = formatNode({
+    id, type, priority, label, summary, tags, files, edges,
+    lastUpdated: today, regressedNTimes, rootCause: rc,
+    author: resolvedAuthor, session: resolvedSession,
+  });
   const targetFile = targetFileForType(type, id);
   const existingContent = readGraphFile(targetFile, graphRoot);
 
@@ -303,19 +350,27 @@ export function handleAddNode(
     graphRoot
   );
 
+  // The Quick Index is derived: regenerate it from the nodes rather than
+  // appending, so the index stays deterministic and merge-conflict-free across
+  // parallel agents. Best-effort — a missing index shouldn't fail the add.
+  const index = regenerateIndex(graphRoot);
+  const attrib = resolvedAuthor ? ` (author: ${resolvedAuthor}${resolvedSession ? `, session: ${resolvedSession}` : ""})` : "";
+  const indexNote = index.warnings.length
+    ? `\n⚠ Index: ${index.warnings.join("; ")}`
+    : `\n✓ graph_index.md regenerated (${index.total} node(s) indexed).`;
+
   return ok(
-    `✓ Added NODE: ${id} to ${targetFile}.\n\n` +
+    `✓ Added NODE: ${id} to ${targetFile}${attrib}.${indexNote}\n\n` +
     `Next steps:\n` +
-    `1. Call simplegraph_update_index({id:"${id}", type:"${type}", file:"${targetFile}"}) to add it to graph_index.md.\n` +
-    `2. Run bash core/scripts/consistency_check.sh to verify no broken edges.\n` +
-    `3. Commit both the code change and the graph update together.`
+    `1. Run bash core/scripts/consistency_check.sh to verify no broken edges (or duplicate IDs).\n` +
+    `2. Commit both the code change and the graph update together.`
   );
 }
 
 // ── MCP Server ────────────────────────────────────────────────────────────────
 
 const server = new Server(
-  { name: "simplegraph-mcp", version: "0.2.0" },
+  { name: "simplegraph-mcp", version: "0.4.0" },
   { capabilities: { tools: {} } }
 );
 
@@ -407,6 +462,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           edges:           { type: "array", items: { type: "string" }, description: "Edge strings: 'VIOLATED_BY → INV_X: explanation'" },
           regressedNTimes: { type: "number", description: "For Regression nodes: how many times this has occurred" },
           root_cause:      { type: "string", description: "Required when regressedNTimes ≥ 2. Must answer: (1) authoritative source of truth, (2) specific invariant violated, (3) why prior fixes were symptomatic." },
+          author:          { type: "string", description: "Who is creating this node (agent/tool name or human). For multi-agent attribution. Defaults to the SIMPLEGRAPH_AUTHOR env var if unset." },
+          session:         { type: "string", description: "Session identifier this node was created in. Helps arbitrate concurrent writes from different agents. Defaults to the SIMPLEGRAPH_SESSION env var if unset." },
         },
         required: ["type", "id", "label", "summary", "priority"],
       },
@@ -495,17 +552,29 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "simplegraph_update_index",
       description:
-        "Add a node to the graph_index.md Quick Index table. Call this immediately after " +
-        "simplegraph_add_node to keep the index current.",
+        "Regenerate the graph_index.md Quick Index from the current nodes. " +
+        "simplegraph_add_node already does this automatically; call this directly only after " +
+        "a manual edit, a git merge, or an archive, to bring the index back in sync. " +
+        "The index is derived from the node files — regenerating (not appending) keeps it " +
+        "deterministic and merge-conflict-free across parallel agents. The id/type/file " +
+        "arguments are optional and only used for the confirmation message.",
       inputSchema: {
         type: "object",
         properties: {
-          id:   { type: "string", description: "Node ID to add (UPPER_SNAKE_CASE)" },
+          id:   { type: "string", description: "(Optional) Node ID just added — for the confirmation message only." },
           type: { type: "string", enum: ["Component", "Invariant", "Regression", "Decision", "Watchlist"] },
-          file: { type: "string", description: "Relative path to the node's file, e.g. components/AUTH.md or regressions.md" },
+          file: { type: "string", description: "(Optional) Relative path to the node's file — for the confirmation message only." },
         },
-        required: ["id", "type", "file"],
       },
+    },
+    {
+      name: "simplegraph_reindex",
+      description:
+        "Regenerate graph_index.md's Quick Index from the current node files. Use after a git " +
+        "merge (where two branches both touched the index) or any manual edit to node files. " +
+        "Because the index is fully derived and node IDs are sorted, the result is identical " +
+        "regardless of the order nodes were added — the intended way to resolve index merge conflicts.",
+      inputSchema: { type: "object", properties: {} },
     },
   ],
 }));
@@ -601,14 +670,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "simplegraph_add_node": {
         const {
           type, id, label, summary, priority,
-          tags, files, edges, regressedNTimes, root_cause,
+          tags, files, edges, regressedNTimes, root_cause, author, session,
         } = args as {
           type: string; id: string; label: string; summary: string;
           priority: string; tags?: string[]; files?: string[]; edges?: string[];
-          regressedNTimes?: number; root_cause?: string;
+          regressedNTimes?: number; root_cause?: string; author?: string; session?: string;
         };
         return handleAddNode(
-          { type, id, label, summary, priority, tags, files, edges, regressedNTimes, root_cause },
+          { type, id, label, summary, priority, tags, files, edges, regressedNTimes, root_cause, author, session },
           GRAPH_ROOT,
           SHARED_ROOT
         );
@@ -637,10 +706,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
         if (action === "append") {
           if (!text) return fail("text is required for action='append'.");
-          const existing = readGraphFile(scratchFile);
-          const ts = new Date().toISOString().slice(0, 16).replace("T", " ");
-          writeGraphFile(scratchFile, `${existing}${existing ? "\n" : ""}<!-- ${ts} -->\n${text}\n`);
-          return ok("✓ Appended to scratchpad.");
+          // Lock the read-append so two agents don't clobber each other's notes.
+          return withGraphLock(GRAPH_ROOT, () => {
+            const existing = readGraphFile(scratchFile);
+            const ts = new Date().toISOString().slice(0, 16).replace("T", " ");
+            writeGraphFile(scratchFile, `${existing}${existing ? "\n" : ""}<!-- ${ts} -->\n${text}\n`);
+            return ok("✓ Appended to scratchpad.");
+          });
         }
         if (action === "clear") {
           writeGraphFile(scratchFile, "");
@@ -651,87 +723,72 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "simplegraph_archive_regression": {
         const { id, resolution } = args as { id: string; resolution?: string };
-        const regrContent = readGraphFile("regressions.md");
-        if (!regrContent) return fail("regressions.md not found.");
+        // Lock: removing a node from one file and appending to another is a
+        // multi-file mutation that must not interleave with other writers.
+        return withGraphLock(GRAPH_ROOT, () => {
+          const regrContent = readGraphFile("regressions.md");
+          if (!regrContent) return fail("regressions.md not found.");
 
-        const nodes = parseNodes(regrContent, "regressions.md");
-        const node = nodes.find(n => n.id === id);
-        if (!node) return fail(`Node ${id} not found in regressions.md.`);
-        if (node.type.toLowerCase() !== "regression")
-          return fail(`Node ${id} is type "${node.type}", not Regression.`);
+          const nodes = parseNodes(regrContent, "regressions.md");
+          const node = nodes.find(n => n.id === id);
+          if (!node) return fail(`Node ${id} not found in regressions.md.`);
+          if (node.type.toLowerCase() !== "regression")
+            return fail(`Node ${id} is type "${node.type}", not Regression.`);
 
-        const today = new Date().toISOString().slice(0, 10);
-        const updatedSummary = resolution
-          ? `${node.summary.replace(/\.*$/, "")}. Resolved: ${resolution}`
-          : node.summary;
+          const today = new Date().toISOString().slice(0, 10);
+          const updatedSummary = resolution
+            ? `${node.summary.replace(/\.*$/, "")}. Resolved: ${resolution}`
+            : node.summary;
 
-        const archiveBlock = formatNode({
-          id: node.id, type: node.type, priority: node.priority,
-          label: node.label, summary: updatedSummary, tags: node.tags,
-          files: node.files, edges: node.edges,
-          lastUpdated: today, regressedNTimes: node.regressedNTimes,
-          rootCause: node.rootCause,
+          const archiveBlock = formatNode({
+            id: node.id, type: node.type, priority: node.priority,
+            label: node.label, summary: updatedSummary, tags: node.tags,
+            files: node.files, edges: node.edges,
+            lastUpdated: today, regressedNTimes: node.regressedNTimes,
+            rootCause: node.rootCause, author: node.author, session: node.session,
+          });
+
+          // Remove node block from regressions.md; rawContent includes trailing --- if not last node
+          let newRegressions = regrContent.replace(node.rawContent, "");
+          newRegressions = newRegressions.replace(/\n\n---\s*$/, ""); // trailing separator
+          newRegressions = newRegressions.replace(/^---\s*\n+/, "");  // leading separator
+          const trimmed = newRegressions.trim();
+          writeGraphFile("regressions.md", trimmed ? trimmed + "\n" : "");
+
+          const archiveContent = readGraphFile("archive/resolved_regressions.md");
+          writeGraphFile(
+            "archive/resolved_regressions.md",
+            archiveContent
+              ? `${archiveContent.trimEnd()}\n\n---\n\n${archiveBlock}\n`
+              : `${archiveBlock}\n`
+          );
+
+          // The regression left the active set — regenerate the index to drop it.
+          const index = regenerateIndex(GRAPH_ROOT);
+          const indexNote = index.warnings.length
+            ? `\n⚠ Index: ${index.warnings.join("; ")}`
+            : `\n✓ graph_index.md regenerated — ${id} no longer in Active Regressions.`;
+
+          return ok(
+            `✓ Archived NODE: ${id} → archive/resolved_regressions.md.${indexNote}\n\n` +
+            `Next step: commit the archive alongside your fix.`
+          );
         });
-
-        // Remove node block from regressions.md; rawContent includes trailing --- if not last node
-        let newRegressions = regrContent.replace(node.rawContent, "");
-        newRegressions = newRegressions.replace(/\n\n---\s*$/, ""); // trailing separator
-        newRegressions = newRegressions.replace(/^---\s*\n+/, "");  // leading separator
-        const trimmed = newRegressions.trim();
-        writeGraphFile("regressions.md", trimmed ? trimmed + "\n" : "");
-
-        const archiveContent = readGraphFile("archive/resolved_regressions.md");
-        writeGraphFile(
-          "archive/resolved_regressions.md",
-          archiveContent
-            ? `${archiveContent.trimEnd()}\n\n---\n\n${archiveBlock}\n`
-            : `${archiveBlock}\n`
-        );
-
-        return ok(
-          `✓ Archived NODE: ${id} → archive/resolved_regressions.md.\n\n` +
-          `Next steps:\n` +
-          `1. Remove ${id} from the Active Regressions row in graph_index.md.\n` +
-          `2. Commit the archive alongside your fix.`
-        );
       }
 
-      case "simplegraph_update_index": {
-        const { id, type, file } = args as { id: string; type: string; file: string };
-        let content = readGraphFile("graph_index.md");
-        if (!content) return fail("graph_index.md not found.");
-
-        const categoryMap: Record<string, string> = {
-          "Component":  "Components",
-          "Invariant":  "Invariants",
-          "Regression": "Active Regressions",
-          "Decision":   "Decisions",
-          "Watchlist":  "Watchlists & Open Issues",
-        };
-        const rowLabel = categoryMap[type];
-        if (!rowLabel) return fail(`Unknown node type: ${type}`);
-
-        // Match the Quick Index table row for this category
-        const rowPattern = new RegExp(
-          `(\\|\\s*\\*\\*${rowLabel}\\*\\*\\s*\\|)([^|]*)(\\|[^|]*\\|)`,
-          "i"
-        );
-        if (!rowPattern.test(content)) {
-          return fail(
-            `Could not find "**${rowLabel}**" row in graph_index.md.\n` +
-            `Add this row manually:\n| **${rowLabel}** | ${id} | \`${file}\` |`
-          );
-        }
-
-        content = content.replace(rowPattern, (_, prefix, nodeCol, suffix) => {
-          // Strip placeholder italic text like _(add your ... here)_
-          const cleaned = nodeCol.replace(/_\([^)]*\)_/g, "").trim();
-          const updated = cleaned ? ` ${cleaned}, ${id} ` : ` ${id} `;
-          return `${prefix}${updated}${suffix}`;
+      case "simplegraph_update_index":
+      case "simplegraph_reindex": {
+        const { id } = args as { id?: string };
+        return withGraphLock(GRAPH_ROOT, () => {
+          const index = regenerateIndex(GRAPH_ROOT);
+          if (index.warnings.length && index.total === 0) {
+            return fail(index.warnings.join("; "));
+          }
+          const breakdown = index.rows.map(r => `${r.label}: ${r.count}`).join(", ");
+          const suffix = index.warnings.length ? `\n⚠ ${index.warnings.join("; ")}` : "";
+          const lead = id ? `✓ Regenerated graph_index.md (${id} included). ` : "✓ Regenerated graph_index.md. ";
+          return ok(`${lead}${index.total} node(s) indexed — ${breakdown}.${suffix}`);
         });
-
-        writeGraphFile("graph_index.md", content);
-        return ok(`✓ Added ${id} to the "${rowLabel}" row in graph_index.md.`);
       }
 
       default:
@@ -748,13 +805,20 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   process.stderr.write(
-    `simplegraph-mcp v0.2.0 ready\n` +
+    `simplegraph-mcp v0.4.0 ready\n` +
     `  GRAPH_ROOT:  ${GRAPH_ROOT}\n` +
-    (SHARED_ROOT ? `  SHARED_ROOT: ${SHARED_ROOT}\n` : "")
+    (SHARED_ROOT ? `  SHARED_ROOT: ${SHARED_ROOT}\n` : "") +
+    (DEFAULT_AUTHOR ? `  AUTHOR:      ${DEFAULT_AUTHOR}\n` : "") +
+    (DEFAULT_SESSION ? `  SESSION:     ${DEFAULT_SESSION}\n` : "")
   );
 }
 
-main().catch((e) => {
-  process.stderr.write(`Fatal: ${e.message}\n`);
-  process.exit(1);
-});
+// Only start the server when run directly (bin or `node dist/index.js`) —
+// importing this module for its exported handlers (tests) must not attach
+// to stdio, or the importing process never exits.
+if (/(^|[\\/])index\.(js|ts)$/.test(process.argv[1] ?? "")) {
+  main().catch((e) => {
+    process.stderr.write(`Fatal: ${e.message}\n`);
+    process.exit(1);
+  });
+}

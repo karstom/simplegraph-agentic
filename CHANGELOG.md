@@ -1,5 +1,93 @@
 # Changelog
 
+## [0.4.0] — 2026-07-22
+
+### Multi-agent development safety
+
+Hardens the graph for concurrent writers — parallel Claude Code sessions,
+worktree-based subagents, or a team whose tools all write to the same graph.
+
+- **Atomic writes.** Every graph write now goes through a temp-file-plus-rename,
+  so a reader in another session can never observe a half-written node file.
+- **Cross-process graph lock.** Read-modify-write tool calls
+  (`simplegraph_update_node`, `simplegraph_add_node`, `simplegraph_archive_regression`,
+  scratchpad append) now hold a single advisory lock per graph root for the whole
+  operation. This closes the lost-update race where two sessions both read
+  `REGRESSED_N_TIMES = N` and both write `N+1`, silently dropping a recurrence —
+  the one signal the graph most needs to keep. Stale locks (crashed holder) are
+  detected by timestamp and reclaimed; the lock is always released, including on
+  error.
+- **Derived, regenerable Quick Index.** `graph_index.md`'s Quick Index is now
+  treated as a *view* of the node files, not a hand-appended list. A new
+  `sg reindex` command and `simplegraph_reindex` tool rebuild it deterministically
+  (IDs sorted, recurring regressions annotated `(×N)`), leaving the Task Routing
+  section untouched. Because the output is order-independent, this is the intended
+  way to resolve `graph_index.md` merge conflicts after parallel branches. Adding
+  or archiving a node now regenerates the index automatically — the manual
+  `simplegraph_update_index` step is no longer required (the tool remains, now an
+  alias for reindex).
+- **Author/Session attribution.** Nodes may carry `**Author:**` and `**Session:**`
+  fields recording which agent/tool and session created them, so concurrent or
+  conflicting writes can be told apart and arbitrated. `simplegraph_add_node`
+  accepts `author`/`session` arguments and falls back to the `SIMPLEGRAPH_AUTHOR`
+  and `SIMPLEGRAPH_SESSION` environment variables. Fields are optional and omitted
+  when unset, so existing nodes and seeded output are unchanged.
+- **Duplicate-ID detection.** `consistency_check.sh` now fails when the same node
+  ID is defined more than once — the collision two agents (or two merged branches)
+  can create without git ever raising a conflict.
+- **Union-merged list files.** A shipped `core/.gitattributes` (and
+  `shared/.gitattributes`) marks the append-only node files `merge=union`, so two
+  branches that each appended a node merge cleanly instead of conflicting on every
+  add. `graph_index.md` is deliberately excluded — regenerate it with `sg reindex`
+  after a merge. `setup.sh` installs and refreshes these files.
+- **Trust boundary for the shared graph.** The MCP server was already read-only
+  against `shared/`, making promotion a deliberate human act; that control is now
+  documented, and `consistency_check.sh` is shared-aware — it auto-detects a
+  sibling `shared/` graph (or takes `--shared <dir>`), validates IDs and edges
+  across both graphs (so cross-graph edges resolve instead of reading as broken),
+  and warns when a shared node carries no attribution (`Author`/`Provenance`/
+  `Seeded`) — an org-wide rule with no traceable source.
+
+Propagation across branches follows your git workflow: a node reaches other
+agents when its branch merges, so commit graph updates alongside the code and
+land them promptly (documented in `core/HOW_TO_UPDATE.md`).
+
+All additions are backward-compatible: the node format only grows optional
+fields, `sg seed` output is byte-identical to 0.3.0, and the shared-graph checks
+are inert when no `shared/` graph is present.
+
+## [0.3.0] — 2026-07-20
+
+### New: `sg seed` — bootstrap a graph from repository history
+
+The mcp package now ships a second bin, `sg`, whose first command mines an
+existing repository into a draft memory graph. Deterministic, offline, no API
+key required (Tier 1); an LLM enrichment seam exists behind the same extractor
+interface but is deliberately unimplemented this release.
+
+- **Extractors:** reverts and repeated/annotated fix commits → Regressions;
+  ADR/RFC docs, merge-commit bodies, deliberate-change commits → Decisions;
+  emphatic rule comments and rule-shaped test names → Invariants; TODO-class
+  comments and high-churn files → Watchlists; top-level structure → Components.
+- **Edges:** component ownership (`CONTAINS`), revert pairs (`SUPERSEDED_BY`/
+  `CAUSES`), shared issue references and co-change coupling (`RELATES_TO`).
+  `SUPERSEDED_BY` and `RELATES_TO` are new documented edge types.
+- **Provenance:** every seeded node carries `**Provenance:**` (source commits /
+  file locations) and `**Seeded:**` (extractor, confidence, content hash).
+  Both fields round-trip through the parser and MCP tools.
+- **Review gate:** nothing is written without an interactive confirm (`--yes`
+  for scripts); `--dry-run` mines and summarizes only. Quality controls:
+  `--min-confidence` floor, `--max-per-type` caps, near-duplicate collapsing.
+- **Idempotent:** stable content-derived node IDs; re-runs at the same commit
+  are no-ops, re-runs after new commits add only what's new, and hand-edited
+  seeded nodes are never overwritten (conflicts are reported).
+
+### Fixed
+
+- Importing `mcp/src/index.ts` for its exported handlers (as the tests do) no
+  longer attaches the MCP server to stdio — previously `node --test` never
+  exited. The server now starts only when `index.js` is the entry module.
+
 ## [0.2.0] — 2026-06-04
 
 ### Breaking change — Recurrence Root-Cause Gate
