@@ -92,6 +92,29 @@ export function mineCommits(repoRoot: string, opts: { since?: string; maxCommits
       files: filesBySha.get(sha) ?? [],
     });
   }
+
+  // `git log --name-only` lists nothing for a merge, so a Decision mined from a
+  // merge commit landed with an empty **Files:** field and could never surface
+  // through check_files. Resolve those against the first parent, which is the
+  // set of files the merge actually brought onto the branch.
+  for (const c of commits) {
+    if (c.parents.length < 2 || c.files.length > 0) continue;
+    try {
+      // Diff the first parent's tree against the merge explicitly. `diff-tree`
+      // on a merge SHA alone prints nothing (it needs --diff-merges), whereas
+      // naming both trees is unambiguous plumbing.
+      c.files = runGit(repoRoot, [
+        "diff-tree", "--no-commit-id", "--name-only", "-r", c.parents[0], c.sha,
+      ])
+        .split("\n")
+        .map(l => l.trim())
+        .filter(Boolean)
+        .filter(f => !isSkippedPath(f));
+    } catch {
+      // A merge we cannot diff (e.g. grafted history) simply keeps no files.
+    }
+  }
+
   return commits;
 }
 

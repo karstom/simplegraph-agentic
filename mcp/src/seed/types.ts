@@ -70,7 +70,7 @@ export interface ExtractorContext {
 
 /**
  * Tier 1 extractor seam. Deterministic implementations ship now; an
- * LLM-assisted implementation (see enrich.ts) plugs in behind the same
+ * An agent reviewing simplegraph_seed_candidates supplies the judgment behind the same
  * interface later without touching the pipeline.
  */
 export interface Extractor {

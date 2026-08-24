@@ -25,10 +25,51 @@ export interface GraphNode {
   sourceFile: string;
 }
 
+/**
+ * Character ranges that hold documentation rather than graph content: HTML
+ * comments (commented-out examples) and fenced code blocks (format templates).
+ *
+ * consistency_check.sh has always ignored both. parseNodes did not, so the two
+ * disagreed about what a node is: the gate counted the real nodes while the
+ * index, the search tools and the update path also saw scaffold placeholders
+ * like `## NODE: INV_EXAMPLE` — serving "What this rule is, why it exists" to
+ * agents as real memory, and letting a write land inside a comment block.
+ */
+function maskedRegions(content: string): Array<[number, number]> {
+  const regions: Array<[number, number]> = [];
+
+  for (const m of content.matchAll(/<!--[\s\S]*?-->/g)) {
+    regions.push([m.index, m.index + m[0].length]);
+  }
+
+  // Fence toggles on ``` or ~~~ at the start of a line. An unterminated fence
+  // masks to end-of-file, matching how a markdown renderer treats it.
+  let open: number | null = null;
+  for (const m of content.matchAll(/^[ \t]*(?:```|~~~)[^\n]*$/gm)) {
+    if (open === null) open = m.index;
+    else { regions.push([open, m.index + m[0].length]); open = null; }
+  }
+  if (open !== null) regions.push([open, content.length]);
+
+  return regions;
+}
+
 /** Parse all ## NODE: blocks from a markdown string. */
 export function parseNodes(content: string, sourceFile: string): GraphNode[] {
-  // Split on any line that starts a new NODE block
-  const sections = content.split(/(?=^## NODE:)/m).filter(s => /^## NODE:/m.test(s));
+  const masked = maskedRegions(content);
+  const isMasked = (offset: number) => masked.some(([start, end]) => offset >= start && offset < end);
+
+  // Slice on NODE headings by offset (rather than String.split) so a heading's
+  // position can be tested against the masked ranges. Section boundaries are
+  // unchanged, so rawContent — and therefore every seeded content hash — is
+  // byte-identical to what the previous implementation produced.
+  const headings = [...content.matchAll(/^## NODE:/gm)].map(m => m.index);
+  const sections: string[] = [];
+  for (let i = 0; i < headings.length; i++) {
+    if (isMasked(headings[i])) continue;
+    const end = i + 1 < headings.length ? headings[i + 1] : content.length;
+    sections.push(content.slice(headings[i], end));
+  }
 
   return sections.flatMap((section): GraphNode[] => {
     const idMatch = section.match(/^## NODE:\s*([A-Z][A-Z0-9_]*)/m);

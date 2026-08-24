@@ -286,3 +286,262 @@ test("a heading carrying trailing text still resolves to its node", () => {
   const nodes = parseNodes(readFileSync(join(dir, "regressions.md"), "utf-8"), "regressions.md");
   assert.equal(nodes[0].priority, "HIGH");
 });
+
+// ── simplegraph_seed_candidates ───────────────────────────────────────────────
+// The tool that replaced the in-process LLM proposer. There is no model here:
+// it hands the calling agent evidence and lets that agent judge. What must hold
+// is that repeated calls converge, that already-written work is never re-offered,
+// and that a batch cannot blow up the caller's context window.
+
+import { execFileSync } from "node:child_process";
+import { mkdirSync } from "node:fs";
+import { handleSeedCandidates } from "./index.js";
+
+const WHY =
+  "We chose SQLite over Postgres because the app is single-user and offline-first; " +
+  "a server dependency was rejected as it would complicate deployment for everyone.";
+
+/** A repo with a core/ graph inside it, matching the real install layout. */
+function repoWithGraph(): { repo: string; graphRoot: string } {
+  const repo = mkdtempSync(join(tmpdir(), "sg-cand-"));
+  const graphRoot = join(repo, "core");
+  mkdirSync(graphRoot, { recursive: true });
+  writeFileSync(join(graphRoot, "decisions.md"), "# Decisions\n");
+  const git = (...a: string[]) =>
+    execFileSync("git", a, {
+      cwd: repo,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: "T", GIT_AUTHOR_EMAIL: "t@t",
+        GIT_COMMITTER_NAME: "T", GIT_COMMITTER_EMAIL: "t@t",
+        GIT_AUTHOR_DATE: "2026-01-01T12:00:00", GIT_COMMITTER_DATE: "2026-01-01T12:00:00",
+      },
+    });
+  git("init", "-q");
+  // Commit the scaffold on its own, so later commits contain only their own
+  // files and the "did this commit touch core/" signal stays meaningful.
+  git("add", "-A");
+  git("commit", "-m", "chore: scaffold");
+  return { repo, graphRoot };
+}
+
+function commitWith(repo: string, subject: string, body: string, file = "a.ts") {
+  mkdirSync(join(repo, file, ".."), { recursive: true });
+  writeFileSync(join(repo, file), `// ${subject}\n${Math.random()}\n`);
+  const env = {
+    ...process.env,
+    GIT_AUTHOR_NAME: "T", GIT_AUTHOR_EMAIL: "t@t",
+    GIT_COMMITTER_NAME: "T", GIT_COMMITTER_EMAIL: "t@t",
+    GIT_AUTHOR_DATE: "2026-01-01T12:00:00", GIT_COMMITTER_DATE: "2026-01-01T12:00:00",
+  };
+  execFileSync("git", ["add", "-A"], { cwd: repo, env });
+  execFileSync("git", ["commit", "-m", subject, "-m", body], { cwd: repo, env });
+}
+
+function idsIn(text: string): string[] {
+  return [...text.matchAll(/^### (DEC_\S+)/gm)].map(m => m[1]);
+}
+
+test("candidates are offered with the commit body the agent needs to judge", () => {
+  const { repo, graphRoot } = repoWithGraph();
+  commitWith(repo, "feat: add local persistence", WHY);
+
+  const r = handleSeedCandidates({}, graphRoot);
+  assert.equal(r.isError, undefined);
+  const text = r.content[0].text;
+  assert.equal(idsIn(text).length, 1);
+  assert.match(text, /single-user and offline-first/, "the rationale must reach the agent");
+  assert.match(text, /simplegraph_add_node/, "the agent must be told how to write it back");
+  assert.match(text, /do not invent a rationale/i, "the decline guard must travel with the evidence");
+});
+
+test("a commit that only says what changed is never offered", () => {
+  const { repo, graphRoot } = repoWithGraph();
+  commitWith(repo, "feat: add a table", "Adds a table and updates the migration script, plus a test for the new column.");
+  const r = handleSeedCandidates({}, graphRoot);
+  assert.match(r.content[0].text, /no commit message in this history records why/i);
+});
+
+// This is what makes the tool safe to call repeatedly: identity is derived from
+// git, so a node the agent already wrote is filtered out by ID.
+test("a candidate already written to the graph is not offered again", () => {
+  const { repo, graphRoot } = repoWithGraph();
+  commitWith(repo, "feat: add local persistence", WHY);
+
+  const first = handleSeedCandidates({}, graphRoot);
+  const id = idsIn(first.content[0].text)[0];
+
+  const added = handleAddNode(
+    { type: "Decision", id, label: "Use SQLite", summary: "Chose SQLite.", priority: "MEDIUM" },
+    graphRoot
+  );
+  assert.equal(added.isError, undefined);
+
+  const second = handleSeedCandidates({}, graphRoot);
+  assert.ok(!idsIn(second.content[0].text).includes(id), "written work must not be re-offered");
+  assert.match(second.content[0].text, /No new decision candidates/);
+});
+
+test("limit batches the work and reports how much is left", () => {
+  const { repo, graphRoot } = repoWithGraph();
+  for (let i = 0; i < 4; i++) commitWith(repo, `feat: change ${i}`, `${WHY} Variant ${i}.`, `f${i}.ts`);
+
+  const r = handleSeedCandidates({ limit: 2 }, graphRoot);
+  const text = r.content[0].text;
+  assert.equal(idsIn(text).length, 2, "must respect the batch size");
+  assert.match(text, /2 further candidate\(s\) available/);
+});
+
+test("a long commit body is truncated so a batch cannot blow up the context window", () => {
+  const { repo, graphRoot } = repoWithGraph();
+  commitWith(repo, "feat: big change", WHY + " " + "padding text. ".repeat(400));
+
+  const text = handleSeedCandidates({}, graphRoot).content[0].text;
+  assert.match(text, /…\(truncated\)/);
+  assert.ok(text.length < 4000, `batch was ${text.length} chars — too large for one node`);
+});
+
+test("a graph outside a git repository fails with a clear message", () => {
+  const graphRoot = join(mkdtempSync(join(tmpdir(), "sg-nogit-")), "core");
+  mkdirSync(graphRoot, { recursive: true });
+  const r = handleSeedCandidates({}, graphRoot);
+  assert.equal(r.isError, true);
+  assert.match(r.content[0].text, /No git repository found/);
+});
+
+test("Label is writable, so wording can be improved with no extra machinery", () => {
+  const dir = setupGraph(1);
+  const r = handleUpdateNode({ id: "REG_TEST", field: "Label", value: "A clearer name" }, dir);
+  assert.equal(r.isError, undefined);
+  const nodes = parseNodes(readFileSync(join(dir, "regressions.md"), "utf-8"), "regressions.md");
+  assert.equal(nodes[0].label, "A clearer name");
+});
+
+// Filtering by derived ID only catches nodes this tool created. Zerofeed's
+// graph was built by hand and its 66 Decision nodes share no ID with anything
+// derivable from a commit, so the agent must be shown what already exists or it
+// will be asked to re-record decisions under a second name.
+test("decisions already in the graph are listed so the agent can skip them", () => {
+  const { repo, graphRoot } = repoWithGraph();
+  commitWith(repo, "feat: add local persistence", WHY);
+  writeFileSync(
+    join(graphRoot, "decisions.md"),
+    "# Decisions\n\n## NODE: DEC_HAND_PICKED_NAME\n**Type:** Decision\n" +
+    "**Label:** Store locally rather than server-side\n**Summary:** Prior art.\n" +
+    "**LastUpdated:** 2026-01-01\n"
+  );
+
+  const text = handleSeedCandidates({}, graphRoot).content[0].text;
+  assert.match(text, /Decisions already in the graph/);
+  assert.match(text, /DEC_HAND_PICKED_NAME: Store locally rather than server-side/);
+  assert.match(text, /skip any candidate these already cover/i);
+});
+
+test("the remaining count reflects all candidates, not a fetch window", () => {
+  const { repo, graphRoot } = repoWithGraph();
+  for (let i = 0; i < 12; i++) commitWith(repo, `feat: change ${i}`, `${WHY} Variant ${i}.`, `f${i}.ts`);
+  const text = handleSeedCandidates({ limit: 2 }, graphRoot).content[0].text;
+  assert.match(text, /10 further candidate\(s\) available/);
+});
+
+// Reviewing Zerofeed by hand, 3 of the first 4 candidates were already in the
+// graph under hand-chosen names — and the clearest tell was that the commit had
+// edited core/ in the same change.
+test("a commit that also edited the graph is flagged as probably already recorded", () => {
+  const { repo, graphRoot } = repoWithGraph();
+  commitWith(repo, "feat: add persistence", WHY, "core/decisions.md");
+
+  const text = handleSeedCandidates({}, graphRoot).content[0].text;
+  assert.match(text, /also edited the graph — its decision is probably already recorded/);
+});
+
+test("an ordinary commit carries no such flag", () => {
+  const { repo, graphRoot } = repoWithGraph();
+  commitWith(repo, "feat: add persistence", WHY, "src/db.ts");
+  const text = handleSeedCandidates({}, graphRoot).content[0].text;
+  assert.ok(!/probably already recorded/.test(text));
+});
+
+// Of 14 Zerofeed candidates reviewed by hand, 6 were already recorded under a
+// hand-chosen name — the single largest reason to reject one.
+test("a candidate restating an existing decision names the node it duplicates", () => {
+  const { repo, graphRoot } = repoWithGraph();
+  commitWith(repo, "feat(gateway): F-02 durable per-IP-subnet PoW escalation", WHY, "src/gw.ts");
+  writeFileSync(
+    join(graphRoot, "decisions.md"),
+    "# Decisions\n\n## NODE: DEC_F02_DURABLE_SUBNET_ESCALATION\n**Type:** Decision\n" +
+    "**Label:** F-02: Durable per-IP-subnet PoW escalation (KV short-TTL counters)\n" +
+    "**Summary:** Prior art.\n**LastUpdated:** 2026-01-01\n"
+  );
+
+  const text = handleSeedCandidates({}, graphRoot).content[0].text;
+  assert.match(text, /Probably already recorded as DEC_F02_DURABLE_SUBNET_ESCALATION/);
+});
+
+test("an unrelated existing decision is not reported as a duplicate", () => {
+  const { repo, graphRoot } = repoWithGraph();
+  commitWith(repo, "feat(trust): vouch seed hardening and seed-set vetting", WHY, "src/trust.ts");
+  writeFileSync(
+    join(graphRoot, "decisions.md"),
+    "# Decisions\n\n## NODE: DEC_ARTIFACT_PERSISTENCE\n**Type:** Decision\n" +
+    "**Label:** Write-Through R2 Persistence for User-Generated Artifacts\n" +
+    "**Summary:** Prior art.\n**LastUpdated:** 2026-01-01\n"
+  );
+  const text = handleSeedCandidates({}, graphRoot).content[0].text;
+  assert.ok(!/Probably already recorded/.test(text));
+});
+
+// A caught-up graph and a history that never recorded rationale both yield zero
+// candidates, but they call for opposite responses from the agent.
+test("a history with no rationale says so, rather than claiming the graph is caught up", () => {
+  const { repo, graphRoot } = repoWithGraph();
+  commitWith(repo, "chore: bump deps", "Co-authored-by: bot <bot@example.com>", "p.json");
+  const text = handleSeedCandidates({}, graphRoot).content[0].text;
+  assert.match(text, /no commit message in this history records why/i);
+  assert.match(text, /from reading the code/);
+  assert.ok(!/already represented in the graph/.test(text));
+});
+
+test("a caught-up graph reports that its candidates are all already written", () => {
+  const { repo, graphRoot } = repoWithGraph();
+  commitWith(repo, "feat: add persistence", WHY, "src/db.ts");
+  const id = [...handleSeedCandidates({}, graphRoot).content[0].text.matchAll(/^### (DEC_\S+)/gm)][0][1];
+  handleAddNode({ type: "Decision", id, label: "L", summary: "S", priority: "MEDIUM" }, graphRoot);
+
+  const text = handleSeedCandidates({}, graphRoot).content[0].text;
+  assert.match(text, /all are already represented in the graph/);
+});
+
+// Vizro's rationale is in its PR descriptions, not its commits — so when the
+// history is empty of reasoning but names pull requests, point at those.
+test("a squash-merge history points the agent at the pull requests", () => {
+  const { repo, graphRoot } = repoWithGraph();
+  commitWith(repo, "[Feat] Introduce DateTimePicker (#1805)", "Co-authored-by: bot <b@e.com>", "src/a.py");
+  commitWith(repo, "[Docs] New tutorial (#1357)", "Co-authored-by: bot <b@e.com>", "src/b.py");
+
+  const text = handleSeedCandidates({}, graphRoot).content[0].text;
+  assert.match(text, /name a pull request/);
+  assert.match(text, /#1805/);
+  assert.ok(!/#1357/.test(text), "a docs PR is not offered as a decision source");
+  assert.match(text, /NOT ranked by importance/, "the sample must not imply a ranking it cannot make");
+});
+
+// Mining is linear in the window: ~1ms per commit typically, ~5ms on a repo the
+// size of DuckDB, where 10,000 commits takes 50s. An interactive tool call has
+// to bound that; `sg seed` stays uncapped for batch use.
+test("an oversized history window is capped and the caller is told", () => {
+  const { repo, graphRoot } = repoWithGraph();
+  commitWith(repo, "feat: add persistence", WHY, "src/db.ts");
+
+  const text = handleSeedCandidates({ max_commits: 50000 }, graphRoot).content[0].text;
+  assert.match(text, /Window capped at 2000 commits \(you asked for 50000\)/);
+  assert.match(text, /sg seed/, "the uncapped path must be named");
+});
+
+test("a window within the cap draws no note", () => {
+  const { repo, graphRoot } = repoWithGraph();
+  commitWith(repo, "feat: add persistence", WHY, "src/db.ts");
+  const text = handleSeedCandidates({ max_commits: 300 }, graphRoot).content[0].text;
+  assert.ok(!/Window capped/.test(text));
+});

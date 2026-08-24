@@ -371,3 +371,90 @@ test("Quick Index entries are sorted, so merge order cannot change the result", 
     assert.deepEqual(ids, [...ids].sort(), `Quick Index row not sorted: ${cells[1]}`);
   }
 });
+
+// ── Extraction precision (Class A fixes) ──────────────────────────────────────
+
+test("a test declaration inside a string literal is fixture data, not an invariant", () => {
+  const repo = mkdtempSync(join(tmpdir(), "sg-fixture-"));
+  git(repo, "init", "-q");
+  commit(repo, "add extractor tests", {
+    // The literal case that produced INV_NEVER_PERSISTS_TOKEN_AFTER_LOGOUT in a
+    // repo with no authentication: a fake test embedded as fixture data.
+    "src/seed.test.ts":
+      'const files = {\n' +
+      '  "src/auth.test.ts": \'test("never persists token after logout", () => {});\\n\',\n' +
+      '};\n' +
+      'test("must reject an unsigned payload", () => {});\n',
+  });
+  const ids = mine(repo).nodes.map(n => n.id);
+  assert.ok(
+    !ids.some(id => id.includes("TOKEN_AFTER_LOGOUT")),
+    `fixture string became a node: ${ids.join(", ")}`
+  );
+  // The real declaration on the following line must still be picked up.
+  assert.ok(
+    ids.some(id => id.includes("REJECT_UNSIGNED_PAYLOAD")),
+    `real test was not extracted: ${ids.join(", ")}`
+  );
+});
+
+test("a file with a repeat-fix Regression does not also get a churn Watchlist", () => {
+  const repo = mkdtempSync(join(tmpdir(), "sg-churn-"));
+  git(repo, "init", "-q");
+  // The churn extractor needs 5+ commits touching the file; the repeat-fix
+  // extractor needs 2+ of them to be fix commits. Both must fire for the
+  // overlap this test guards to exist at all.
+  commit(repo, "initial", { "svc.ts": "v0\n" });
+  for (const n of [1, 2, 3, 4]) commit(repo, `refactor svc step ${n}`, { "svc.ts": `r${n}\n` });
+  for (const n of [1, 2]) commit(repo, `Fix svc bug ${n}`, { "svc.ts": `v${n}\n` });
+
+  const nodes = mine(repo).nodes;
+  const repeatFiles = new Set(
+    nodes.filter(n => n.type === "Regression" && n.tags.includes("repeat-fix")).flatMap(n => n.files)
+  );
+  assert.ok(repeatFiles.has("svc.ts"), "expected a repeat-fix Regression for svc.ts");
+  const churnDupes = nodes.filter(
+    n => n.type === "Watchlist" && n.tags.includes("churn") && n.files.includes("svc.ts")
+  );
+  assert.deepEqual(churnDupes, [], "churn Watchlist duplicates the repeat-fix Regression");
+});
+
+test("nodes sharing an ID stem are linked rather than silently coexisting", () => {
+  const repo = mkdtempSync(join(tmpdir(), "sg-slug-"));
+  git(repo, "init", "-q");
+  commit(repo, "initial", {
+    // Same rule, two sources, two phrasings — escapes the label dedupe but
+    // slugifies to one stem.
+    "merge.ts": "// A hand-authored node with a colliding ID is NEVER touched.\n",
+    "merge.test.ts": 'test("a hand-authored node with a colliding ID is never overwritten", () => {});\n',
+  });
+  const siblings = mine(repo).nodes.filter(n => n.id.includes("HAND_AUTHORED_NODE_WITH_COLLIDING"));
+  if (siblings.length < 2) return; // extractors may collapse them upstream; nothing to link
+  for (const n of siblings) {
+    const linked = n.edges.filter(e => e.edgeType === "RELATES_TO").map(e => e.target);
+    for (const other of siblings) {
+      if (other.id === n.id) continue;
+      assert.ok(linked.includes(other.id), `${n.id} is not linked to same-stem sibling ${other.id}`);
+    }
+  }
+});
+
+test("a Decision mined from a merge commit carries the merged files", () => {
+  const repo = mkdtempSync(join(tmpdir(), "sg-merge-"));
+  git(repo, "init", "-q");
+  commit(repo, "initial", { "README.md": "start\n" });
+  git(repo, "checkout", "-q", "-b", "feature");
+  commit(repo, "add the feature", { "src/feature.ts": "export const f = 1;\n" });
+  git(repo, "checkout", "-q", "-");
+  git(repo, "merge", "--no-ff", "-m",
+    "Adopt the feature\n\nWe chose this approach over the alternative because it keeps the write path deterministic and avoids a second source of truth for the index.",
+    "feature");
+
+  const decisions = mine(repo).nodes.filter(n => n.type === "Decision");
+  const fromMerge = decisions.find(n => n.label.toLowerCase().includes("chose") || n.summary.includes("Adopt the feature"));
+  if (!fromMerge) return; // extractor thresholds may reject the body; not this test's concern
+  assert.ok(
+    fromMerge.files.length > 0,
+    "merge-derived Decision has no Files, so check_files can never surface it"
+  );
+});

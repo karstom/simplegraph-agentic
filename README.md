@@ -242,6 +242,42 @@ When several agents write the graph at once — parallel Claude Code sessions, w
 
 Propagation is not instant: an agent's node reaches others only when its branch merges, so commit graph updates in the same commit as the code and land them promptly. Because a graph node is agent-authored text that other agents later load as guidance, keep it in the PR diff where a human reviews it — the same trust boundary a shared `shared/` graph relies on. See [`mcp/README.md`](mcp/README.md#multi-agent-development) for the full mechanism.
 
+### Seeding, and closing the decision gap
+
+`sg seed` mines the repository deterministically: offline, no API key, full
+provenance on every node, and byte-identical output when re-run at the same
+commit. That is the whole CLI — it never calls a model.
+
+What it cannot do is judge. Its Decision extractor only fires when a commit
+subject starts with an explicit verb (`refactor`, `migrate`, `adopt`, …), so
+seeding this repository found 2 Decisions across 43 commits and missed several
+recorded in ordinary commit bodies.
+
+That judgment belongs to the agent you already have connected. The MCP server
+exposes **`simplegraph_seed_candidates`**, which returns commits whose message
+plausibly contains a rationale, along with the message body and a pre-computed
+node ID. The agent reads them, decides which actually state *why* rather than
+just *what*, and writes the good ones with the ordinary `simplegraph_add_node`.
+
+This means there is no second model, no API key, no separate billing path, and
+no new write path — the agent uses whichever model you are already running, and
+its writes go through the same atomic, locked, no-clobber tools as everything
+else. Two properties make it safe to call repeatedly:
+
+- **Identity comes from git**, not from the agent: a node's ID is derived from
+  the commit subject and SHA, so how the agent words it cannot change it.
+- **Candidates already written are never returned**, so calling the tool again
+  converges on the remaining work instead of duplicating.
+
+The tool's description instructs the agent to skip anything that describes only
+what changed. Where the "why" was never written down it cannot be recovered, and
+a missing node beats an invented rationale — these are loaded as guidance by
+other agents.
+
+Improving the wording of existing nodes needs no special machinery either: read
+them with `simplegraph_nodes` and rewrite with `simplegraph_update_node`, which
+can now set `Label` as well as `Summary` and `Tags`.
+
 ---
 
 ## Scaling

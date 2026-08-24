@@ -18,6 +18,8 @@ import {
 import * as fs from "fs";
 import * as path from "path";
 import { parseNodes, formatNode, findNodeBlock, escapeRe, type GraphNode } from "./parser.js";
+import { buildContext } from "./seed/mine.js";
+import { selectDecisionCandidates, decisionIdFor, pullRequestTrail } from "./seed/candidates.js";
 import { atomicWriteFileSync, withGraphLock } from "./fsutil.js";
 import { regenerateIndex } from "./reindex.js";
 
@@ -376,6 +378,167 @@ function handleAddNodeLocked(
   );
 }
 
+/**
+ * Offer commits that may record a decision the graph is missing.
+ *
+ * The judgment — is there actually a rationale here — belongs to the calling
+ * agent, which already has a model. This only does the deterministic half:
+ * mine history, rank by how likely a rationale is, and drop anything already
+ * written so repeated calls converge instead of duplicating.
+ */
+export function handleSeedCandidates(
+  args: { limit?: number; max_commits?: number },
+  graphRoot: string,
+  sharedRoot: string | null = null
+): ToolResult {
+  const { limit = 10 } = args;
+
+  // Mining cost is linear in the window and dominated by parsing per-commit
+  // file lists: ~1ms per commit on a typical repo, but ~5ms on one the size of
+  // DuckDB, where 10,000 commits takes 50s and 110MB. This is an interactive
+  // tool call, so the window is capped rather than left to the caller. `sg seed`
+  // is uncapped — a batch run can afford to wait.
+  const MAX_WINDOW = 2000;
+  const requested = args.max_commits ?? 500;
+  const max_commits = Math.min(requested, MAX_WINDOW);
+  // The graph lives at <repo>/core, so its parent is the repository.
+  const repoRoot = path.dirname(graphRoot);
+  if (!fs.existsSync(path.join(repoRoot, ".git"))) {
+    return fail(`No git repository found at ${repoRoot}. Decision candidates are mined from commit history.`);
+  }
+
+  const ctx = buildContext(repoRoot, { maxCommits: max_commits });
+  const nodes = [
+    ...getNodesFromRoot(graphRoot),
+    ...(sharedRoot ? getNodesFromRoot(sharedRoot, "shared") : []),
+  ];
+  const known = new Set(nodes.map(n => n.id));
+
+  // Selection is in-memory and cheap, so rank the whole history and slice here.
+  // Capping the selection instead would make "candidates remaining" report only
+  // what happened to fall inside a fetch window.
+  const windowNote = requested > MAX_WINDOW
+    ? `\n\n_Window capped at ${MAX_WINDOW} commits (you asked for ${requested}) to keep this ` +
+      `call responsive. Use \`sg seed\` for a full-history pass._`
+    : "";
+
+  const { candidates } = selectDecisionCandidates(ctx, Number.MAX_SAFE_INTEGER);
+  const fresh = candidates.filter(c => !known.has(decisionIdFor(c)));
+  const batch = fresh.slice(0, limit);
+
+  if (batch.length === 0) {
+    // Two very different situations, and conflating them misleads: a graph that
+    // is caught up, versus a history that never recorded rationale in the first
+    // place. Vizro squash-merges pull requests, so 1,192 of its 1,284 non-merge
+    // commits have no prose body at all and the honest answer is "look elsewhere".
+    if (candidates.length === 0) {
+      const prs = pullRequestTrail(ctx);
+      // The reasoning is not gone, just upstream. Point at it rather than
+      // fetching it: that needs GitHub credentials, which the calling agent
+      // generally has and simplegraph deliberately does not.
+      const trail = prs.worthReading.length > 0
+        ? `\n\n${prs.total} of those commits name a pull request, so the reasoning is most ` +
+          `likely in the PR descriptions. If you have GitHub access (a GitHub MCP server, a web ` +
+          `fetch tool, or \`gh pr view <n>\`), read some of these and write any real decisions ` +
+          `with simplegraph_add_node.\n\n` +
+          `These are filtered — docs, release and CI changes are excluded — but NOT ranked by ` +
+          `importance: which PR holds a rationale is in text this tool cannot read. Treat it as ` +
+          `a sample, and search the PRs directly if you are looking for something specific.\n` +
+          prs.worthReading.map(s => `  #${s.number}  ${s.date}  ${s.subject}`).join("\n") +
+          (prs.more > 0 ? `\n  …and ${prs.more} more worth reading` : "")
+        : `\n\nDecisions here have to come from you or from reading the code — call ` +
+          `simplegraph_add_node directly.`;
+
+      return ok(
+        `No decision candidates in ${ctx.commits.length} mined commit(s): no commit message ` +
+        `in this history records why a change was made.` + trail + windowNote
+      );
+    }
+    return ok(
+      `✓ No new decision candidates. Of ${candidates.length} commit(s) in ${ctx.commits.length} ` +
+      `that state a rationale, all are already represented in the graph.` + windowNote
+    );
+  }
+
+  // Filtering by derived ID only catches nodes this tool created. A graph built
+  // by hand uses its own names — Zerofeed's 66 Decision nodes share no ID with
+  // anything derivable from a commit — so without this list the agent would be
+  // asked to re-record decisions the graph already holds under another name.
+  const existing = nodes
+    .filter(n => n.type.toLowerCase() === "decision")
+    .map(n => `- ${n.id}: ${n.label}`)
+    .sort();
+  const alreadyRecorded = existing.length
+    ? `**Decisions already in the graph — skip any candidate these already cover:**\n` +
+      existing.slice(0, 80).join("\n") +
+      (existing.length > 80 ? `\n…and ${existing.length - 80} more` : "") + "\n\n"
+    : "";
+
+  // A commit that edited the graph in the same change very likely recorded its
+  // own decision already — on Zerofeed this was true of 3 of the first 4
+  // candidates reviewed. Flag it per-candidate rather than filtering, so the
+  // agent checks instead of losing a real decision to a heuristic.
+  const editsGraph = (c: { files: string[] }) =>
+    c.files.some(f => /(^|\/)core\/[\w-]+\.md$/.test(f));
+
+  // Reviewing 14 Zerofeed candidates by hand, 6 were already recorded under a
+  // hand-chosen name. Title overlap points at the specific match instead of
+  // making the agent scan every existing label; at this threshold it caught the
+  // exact restatements ("F-02 …", "…(§2.3)") with no false positives.
+  const STOPWORDS = new Set(
+    "the a an of to in for on and or is are be with via using new add adds added fix fixes fixed feat chore refactor test docs security e2e make into from at by".split(" ")
+  );
+  const tokens = (text: string) =>
+    new Set(text.toLowerCase().replace(/[^a-z0-9]+/g, " ").split(" ")
+      .filter(w => w.length > 2 && !STOPWORDS.has(w)));
+
+  const decisionLabels = nodes.filter(n => n.type.toLowerCase() === "decision");
+  const likelyDuplicate = (subject: string): GraphNode | undefined => {
+    const a = tokens(subject);
+    let best: { score: number; node?: GraphNode } = { score: 0 };
+    for (const n of decisionLabels) {
+      const b = tokens(n.label);
+      if (!a.size || !b.size) continue;
+      const shared = [...a].filter(w => b.has(w)).length;
+      const score = shared / Math.min(a.size, b.size);
+      if (score > best.score) best = { score, node: n };
+    }
+    return best.score >= 0.7 ? best.node : undefined;
+  };
+
+  const blocks = batch.map(c => [
+    `### ${decisionIdFor(c)}`,
+    `**Commit:** ${c.shortSha} (${c.authorDate})`,
+    `**Subject:** ${c.subject}`,
+    ...(editsGraph(c)
+      ? ["**⚠ This commit also edited the graph — its decision is probably already recorded. Check before adding.**"]
+      : []),
+    ...(likelyDuplicate(c.subject)
+      ? [`**⚠ Probably already recorded as ${likelyDuplicate(c.subject)!.id} — "${likelyDuplicate(c.subject)!.label}". Check before adding.**`]
+      : []),
+    `**Files:** ${c.files.slice(0, 8).map(f => `\`${f}\``).join(", ") || "_(none)_"}`,
+    `**Message body:**`,
+    "```",
+    // Bounded so a batch cannot blow up the caller's context window.
+    c.body.length > 1200 ? c.body.slice(0, 1200) + "\n…(truncated)" : c.body,
+    "```",
+  ].join("\n"));
+
+  const remaining = fresh.length - batch.length;
+  return ok(
+    `${batch.length} decision candidate(s) from ${ctx.commits.length} mined commit(s).\n\n` +
+    `Read each one and decide whether it states WHY, not just what changed. Skip the ones\n` +
+    `that don't — do not invent a rationale. For each one that qualifies, call:\n` +
+    `  simplegraph_add_node({type:"Decision", id:<the id below>, label, summary, priority,\n` +
+    `                        files, tags:["seeded","decision"]})\n\n` +
+    alreadyRecorded +
+    `${blocks.join("\n\n---\n\n")}\n\n` +
+    (remaining > 0
+      ? `_${remaining} further candidate(s) available — call again after writing these._\n`
+      : `_That is every remaining candidate._\n`) + windowNote
+  );
+}
+
 // ── MCP Server ────────────────────────────────────────────────────────────────
 
 const server = new Server(
@@ -496,7 +659,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           id:         { type: "string", description: "Node ID to update" },
           field: {
             type: "string",
-            enum: ["Summary", "Priority", "Tags", "LastUpdated", "REGRESSED_N_TIMES", "Files"],
+            enum: ["Label", "Summary", "Priority", "Tags", "LastUpdated", "REGRESSED_N_TIMES", "Files"],
             description: "Field to update",
           },
           value: {
@@ -556,6 +719,36 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           resolution: { type: "string", description: "One sentence describing how it was resolved (appended to summary)" },
         },
         required: ["id"],
+      },
+    },
+    {
+      name: "simplegraph_seed_candidates",
+      description:
+        "Find commits that may record an architectural DECISION the graph is missing, so you " +
+        "can write the good ones as Decision nodes. Use this when bootstrapping a graph, or " +
+        "periodically to catch up after a batch of work.\n\n" +
+        "Returns commits whose message body plausibly contains a rationale, together with that " +
+        "body and a pre-computed node ID. Commits whose node already exists are never returned, " +
+        "so calling this repeatedly converges rather than duplicating.\n\n" +
+        "For each candidate, decide whether the message actually states WHY — why this approach, " +
+        "what it was chosen over, or what problem it avoids. If it only describes WHAT changed, " +
+        "however large the change, SKIP IT. Do not infer, guess, or reconstruct a reason that is " +
+        "not written down: a missing node is much better than an invented one, because other " +
+        "agents load these nodes as guidance. Expect to skip many candidates.\n\n" +
+        "For the ones that qualify, call simplegraph_add_node with type='Decision', the id given " +
+        "here, a summary in the author's own terms, and the listed files.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          limit: {
+            type: "number",
+            description: "Maximum candidates to return (default 10). Keep small; review in batches.",
+          },
+          max_commits: {
+            type: "number",
+            description: "How far back to mine history (default 500, capped at 2000 to keep the call responsive).",
+          },
+        },
       },
     },
     {
@@ -783,6 +976,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             `Next step: commit the archive alongside your fix.`
           );
         });
+      }
+
+      case "simplegraph_seed_candidates": {
+        const { limit, max_commits } = args as { limit?: number; max_commits?: number };
+        return handleSeedCandidates({ limit, max_commits }, GRAPH_ROOT, SHARED_ROOT);
       }
 
       case "simplegraph_update_index":
