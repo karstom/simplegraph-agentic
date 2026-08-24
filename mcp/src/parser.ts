@@ -111,3 +111,40 @@ export function formatNode(
   if (node.seeded) lines.push(`**Seeded:** ${node.seeded}`);
   return lines.join("\n");
 }
+
+/** Escape a string for literal use inside a RegExp. */
+export function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Split `content` around the block belonging to exactly one node.
+ *
+ * The heading must start a line and the id must be followed by a character that
+ * cannot be part of an id, so `REG_X` can never match the prefix of
+ * `## NODE: REG_XY`. Locating a node with a bare `content.indexOf("## NODE: " + id)`
+ * or an unanchored `## NODE: ${id}[\s\S]*?` regex — as this file used to —
+ * meant an update to REG_X could rewrite REG_XY's fields and leave REG_X
+ * untouched, silently corrupting a neighbouring node.
+ *
+ * The block ends at the next `## NODE:` heading, so a non-greedy field match can
+ * never run past the node it targets into the next one.
+ */
+export function findNodeBlock(
+  content: string,
+  id: string
+): { before: string; block: string; after: string } | null {
+  const heading = new RegExp(`^## NODE:[ \\t]*${escapeRe(id)}(?![A-Z0-9_])`, "m");
+  const m = heading.exec(content);
+  if (!m) return null;
+
+  const bodyStart = m.index + m[0].length;
+  const rel = content.slice(bodyStart).search(/^## NODE:/m);
+  const end = rel === -1 ? content.length : bodyStart + rel;
+
+  return {
+    before: content.slice(0, m.index),
+    block: content.slice(m.index, end),
+    after: content.slice(end),
+  };
+}

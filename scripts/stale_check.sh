@@ -12,6 +12,43 @@
 
 set -euo pipefail
 
+# Node IDs are UPPER_SNAKE_CASE and MAY CONTAIN DIGITS. Must stay in sync with
+# parser.ts and consistency_check.sh — a narrower class truncates IDs.
+ID_CLASS='[A-Z][A-Z0-9_]*'
+
+# Portability: POSIX grep -E / sed / awk only. `grep -P` is absent from BSD/macOS
+# grep, and every -P call here was wrapped in `|| true`, so on a Mac the checks
+# silently degraded instead of failing.
+
+# Drop fenced code blocks and HTML comments so template/example paths are not
+# scanned. Kept in sync with consistency_check.sh; duplicated because setup.sh
+# copies each script standalone into core/scripts/.
+strip_noise() {
+  awk '
+    /^[[:space:]]*(```|~~~)/ { fence = !fence; next }
+    fence { next }
+    {
+      line = $0
+      while (1) {
+        if (incomment) {
+          i = index(line, "-->")
+          if (i == 0) { line = ""; break }
+          line = substr(line, i + 3); incomment = 0
+        } else {
+          i = index(line, "<!--")
+          if (i == 0) break
+          head = substr(line, 1, i - 1)
+          rest = substr(line, i + 4)
+          e = index(rest, "-->")
+          if (e == 0) { line = head; incomment = 1; break }
+          line = head substr(rest, e + 3)
+        }
+      }
+      print line
+    }
+  ' "$1"
+}
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # Auto-detect core directory (mirrors consistency_check.sh logic)
@@ -45,14 +82,18 @@ CUTOFF_DATE=$(date -u -d "${MAX_AGE_DAYS} days ago" +%Y-%m-%d 2>/dev/null || \
 
 if [ -n "${CUTOFF_DATE}" ]; then
   echo "── Nodes older than ${MAX_AGE_DAYS} days (before ${CUTOFF_DATE}) ──"
-  STALE_DATES=$(grep -rn "^\*\*LastUpdated:\*\*" --include='*.md' "${CORE_DIR}" | while IFS= read -r line; do
-    DATE=$(echo "$line" | grep -oP '\d{4}-\d{2}-\d{2}' || echo "")
-    if [ -n "${DATE}" ] && [[ "${DATE}" < "${CUTOFF_DATE}" ]]; then
-      FILE=$(echo "$line" | cut -d: -f1)
-      # Find the node ID for this file
-      NODE_ID=$(grep -B10 "LastUpdated" "$FILE" 2>/dev/null | grep -oP '## NODE: \K[A-Z_]+' | tail -1 || echo "unknown")
-      echo "  ⏳ ${NODE_ID} (${DATE}) — $(basename "$FILE")"
-    fi
+  # Walk each file's stripped content once, tracking the current node ID, so an
+  # old LastUpdated is attributed to the node it actually belongs to.
+  STALE_DATES=$(find "${CORE_DIR}" -name '*.md' -not -name 'auto_map.md' -not -name '.scratchpad.md' | sort | while IFS= read -r mdfile; do
+    strip_noise "$mdfile" | awk -v cutoff="${CUTOFF_DATE}" -v fname="$(basename "$mdfile")" -v idre="^## NODE: (${ID_CLASS})$" '
+      match($0, /^## NODE: [A-Z][A-Z0-9_]*$/) { node = substr($0, 10); next }
+      /^\*\*LastUpdated:\*\*/ {
+        if (match($0, /[0-9]{4}-[0-9]{2}-[0-9]{2}/)) {
+          d = substr($0, RSTART, RLENGTH)
+          if (d < cutoff) printf "  ⏳ %s (%s) — %s\n", (node == "" ? "unknown" : node), d, fname
+        }
+      }
+    '
   done)
 
   if [ -n "${STALE_DATES}" ]; then
@@ -70,30 +111,27 @@ echo ""
 # ── check 2: dead file references ────────────────────────────────────────────
 echo "── Nodes referencing files that no longer exist ──"
 
+# For each node, check every path listed in its **Files:** field.
+# NOTE: the previous implementation ended a pipeline with `grep ... || true | while`,
+# which parses as `grep ... || (true | while ...)`. When grep matched, the while
+# loop was skipped entirely and grep's raw output became the "dead refs" report —
+# so every node with a **Files:** line was flagged, whether or not the file existed.
 DEAD_REFS=$(find "${CORE_DIR}" -name '*.md' -not -name 'auto_map.md' -not -name '.scratchpad.md' | sort | while IFS= read -r mdfile; do
-  # Strip HTML comments and fenced code blocks before scanning
-  # — avoids flagging example paths in <!-- --> blocks and ```...``` template blocks
-  stripped=$(perl -0777 -e '
-    local $/; my $t = <STDIN>;
-    $t =~ s/<!--.*?-->//gs;
-    $t =~ s/```.*?```//gs;
-    print $t;
-  ' < "$mdfile")
-
-  # Extract **Files:** lines from the stripped content, with line context for NODE_ID lookup
-  echo "$stripped" | grep -n "^\*\*Files:\*\*" 2>/dev/null || true | while IFS= read -r fileline; do
-    lineno=$(echo "$fileline" | cut -d: -f1)
-    # Find NODE_ID from the 10 lines above the Files: line in the stripped content
-    NODE_ID=$(echo "$stripped" | head -n "$lineno" | tail -n 10 | grep -oP '## NODE: \K[A-Z_]+' | tail -1 || echo "unknown")
-
-    REFS=$(echo "$fileline" | grep -oP '`[^`]+`' | tr -d '`')
-    for ref in $REFS; do
-      FULL_PATH="${PROJECT_DIR}/${ref}"
-      if [ ! -f "${FULL_PATH}" ] && [ ! -d "${FULL_PATH}" ]; then
-        echo "  💀 ${NODE_ID} → ${ref} (not found in $(basename "$mdfile"))"
-      fi
-    done
-  done
+  strip_noise "$mdfile" \
+    | awk '
+        match($0, /^## NODE: [A-Z][A-Z0-9_]*$/) { node = substr($0, 10); next }
+        /^\*\*Files:\*\*/ { printf "%s\t%s\n", (node == "" ? "unknown" : node), $0 }
+      ' \
+    | while IFS="$(printf '\t')" read -r node fileline; do
+        # Each path is wrapped in backticks: **Files:** `a.ts`, `b.ts`
+        echo "$fileline" | grep -Eo '`[^`]+`' | tr -d '`' | while IFS= read -r ref; do
+          [ -n "$ref" ] || continue
+          FULL_PATH="${PROJECT_DIR}/${ref}"
+          if [ ! -e "${FULL_PATH}" ]; then
+            echo "  💀 ${node} → ${ref} (not found in $(basename "$mdfile"))"
+          fi
+        done
+      done
 done)
 
 if [ -n "${DEAD_REFS}" ]; then
