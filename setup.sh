@@ -402,8 +402,16 @@ esac
 # ── consistency check ─────────────────────────────────────────────────────────
 echo ""
 say "Running consistency check on core/..."
-if bash "${TARGET}/core/scripts/consistency_check.sh" 2>/dev/null; then
+# stderr is deliberately NOT suppressed: exit 2 means the check could not run
+# (e.g. unusable grep/awk) and its diagnostics must reach the user, otherwise a
+# broken gate is indistinguishable from a clean graph.
+CHECK_RC=0
+bash "${TARGET}/core/scripts/consistency_check.sh" || CHECK_RC=$?
+if [ "${CHECK_RC}" -eq 0 ]; then
   ok "Graph is consistent."
+elif [ "${CHECK_RC}" -ge 2 ]; then
+  warn "Consistency check could NOT RUN on this system (exit ${CHECK_RC}) — see the error above."
+  warn "Do not treat it as a passing gate until this is resolved."
 else
   if [ "${UPGRADE_MODE}" = true ]; then
     warn "Consistency check flagged an issue — review core/scripts/consistency_check.sh output."

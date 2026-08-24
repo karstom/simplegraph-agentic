@@ -17,7 +17,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import * as fs from "fs";
 import * as path from "path";
-import { parseNodes, formatNode, type GraphNode } from "./parser.js";
+import { parseNodes, formatNode, findNodeBlock, escapeRe, type GraphNode } from "./parser.js";
 import { atomicWriteFileSync, withGraphLock } from "./fsutil.js";
 import { regenerateIndex } from "./reindex.js";
 
@@ -69,7 +69,9 @@ function getNodesFromRoot(root: string, tag?: string): GraphNode[] {
 
   const compDir = path.join(root, "components");
   if (fs.existsSync(compDir)) {
-    for (const file of fs.readdirSync(compDir)) {
+    // Sorted, matching reindex.ts and seed/merge.ts: readdir order is
+    // filesystem-dependent, which would make node ordering differ across machines.
+    for (const file of fs.readdirSync(compDir).sort()) {
       if (file.endsWith(".md")) {
         const rel = `components/${file}`;
         const parsed = parseNodes(readGraphFile(rel, root), rel);
@@ -157,32 +159,35 @@ function buildGateMessage(nodeId: string, nextValue: number): string {
   );
 }
 
-// Insert or update the **RootCause:** field in a specific node's block.
+/**
+ * Does a node's **Files:** entry refer to the same file as `target`?
+ * Compared segment-wise: one path must be a trailing sub-path of the other, so
+ * `auth.ts` matches `src/auth.ts` but never `src/xauth.ts`. Both inputs are
+ * already lowercased and forward-slashed by the caller.
+ */
+export function pathMatches(nodeFile: string, target: string): boolean {
+  const norm = (p: string) =>
+    p.replace(/\\/g, "/").toLowerCase().split("/").filter(seg => seg && seg !== ".");
+  const a = norm(nodeFile);
+  const b = norm(target);
+  if (!a.length || !b.length) return false;
+  const [short, long] = a.length <= b.length ? [a, b] : [b, a];
+  const offset = long.length - short.length;
+  return short.every((seg, i) => seg === long[offset + i]);
+}
+
+// Insert or update the **RootCause:** field within a single node's block.
 // Placed immediately after **REGRESSED_N_TIMES:** to keep format consistent.
-function insertRootCauseInContent(content: string, nodeId: string, rootCause: string): string {
-  const nodeMarker = `## NODE: ${nodeId}`;
-  const nodeStart = content.indexOf(nodeMarker);
-  if (nodeStart === -1) return content;
-
-  // Isolate this node's block so we never touch adjacent nodes
-  const nextNodeIdx = content.indexOf("\n## NODE:", nodeStart + 1);
-  const nodeEnd = nextNodeIdx !== -1 ? nextNodeIdx : content.length;
-
-  const before = content.slice(0, nodeStart);
-  let nodeBlock = content.slice(nodeStart, nodeEnd);
-  const after = content.slice(nodeEnd);
-
-  if (/\*\*RootCause:\*\*/.test(nodeBlock)) {
-    nodeBlock = nodeBlock.replace(/\*\*RootCause:\*\*[^\n]+/, `**RootCause:** ${rootCause}`);
-  } else {
-    // Insert on line immediately after **REGRESSED_N_TIMES:** N
-    nodeBlock = nodeBlock.replace(
-      /(\*\*REGRESSED_N_TIMES:\*\*[^\n]+)/,
-      `$1\n**RootCause:** ${rootCause}`
-    );
+// Operates on an already-isolated block (see findNodeBlock), so it cannot reach
+// into a neighbouring node.
+function insertRootCause(block: string, rootCause: string): string {
+  if (/\*\*RootCause:\*\*/.test(block)) {
+    return block.replace(/\*\*RootCause:\*\*[^\n]*/, () => `**RootCause:** ${rootCause}`);
   }
-
-  return before + nodeBlock + after;
+  return block.replace(
+    /\*\*REGRESSED_N_TIMES:\*\*[^\n]*/,
+    (m) => `${m}\n**RootCause:** ${rootCause}`
+  );
 }
 
 // ── Exported handler functions (testable with any graphRoot) ──────────────────
@@ -216,7 +221,15 @@ function handleUpdateNodeLocked(
   if (isShared) return fail(`Node ${id} is in the shared read-only graph. Update it in its source repo.`);
 
   const filePath = path.join(graphRoot, node.sourceFile);
-  let content = fs.readFileSync(filePath, "utf-8");
+  const content = fs.readFileSync(filePath, "utf-8");
+
+  // Isolate this node's block up front. Every edit below applies to `block`
+  // only, so no update can leak into an adjacent or prefix-sharing node.
+  const loc = findNodeBlock(content, id);
+  if (!loc) {
+    return fail(`Could not locate the "## NODE: ${id}" heading in ${node.sourceFile}.`);
+  }
+  let block = loc.block;
 
   const today = new Date().toISOString().slice(0, 10);
   const resolvedValue = value === "today" ? today : value;
@@ -234,39 +247,35 @@ function handleUpdateNodeLocked(
     }
 
     // Apply the increment
-    content = content.replace(
-      new RegExp(`(## NODE: ${id}[\\s\\S]*?\\*\\*REGRESSED_N_TIMES:\\*\\*\\s*)\\d+`),
-      `$1${next}`
-    );
+    block = block.replace(/(\*\*REGRESSED_N_TIMES:\*\*[ \t]*)\d+/, (_m, p1: string) => `${p1}${next}`);
 
     // Auto-upgrade priority to HIGH at >= 2
     if (next >= 2) {
-      content = content.replace(
-        new RegExp(`(## NODE: ${id}[\\s\\S]*?\\*\\*Priority:\\*\\*\\s*)\\S+`),
-        `$1HIGH`
-      );
+      block = block.replace(/(\*\*Priority:\*\*[ \t]*)\S+/, (_m, p1: string) => `${p1}HIGH`);
     }
 
     // Write root_cause into the node when provided
     const rc = root_cause?.trim();
     if (rc) {
-      content = insertRootCauseInContent(content, id, rc);
+      block = insertRootCause(block, rc);
     }
 
-    atomicWriteFileSync(filePath, content);
+    atomicWriteFileSync(filePath, loc.before + block + loc.after);
 
     const upgraded = next >= 2 ? " (Priority auto-upgraded to HIGH)" : "";
     const gateNote = rc ? ". Root-Cause Gate satisfied — RootCause field written." : ".";
     return ok(`✓ REGRESSED_N_TIMES for ${id}: ${current} → ${next}${upgraded}${gateNote}`);
   }
 
-  // Generic field update
-  const fieldPattern = new RegExp(`(## NODE: ${id}[\\s\\S]*?\\*\\*${field}:\\*\\*\\s*).+`);
-  if (!fieldPattern.test(content)) {
+  // Generic field update. `field` is escaped because it reaches the regex from
+  // tool input; the replacement uses a function so `$&`-style sequences in the
+  // new value are inserted literally rather than re-expanded.
+  const fieldPattern = new RegExp(`(\\*\\*${escapeRe(field)}:\\*\\*[ \\t]*).+`);
+  if (!fieldPattern.test(block)) {
     return fail(`Field **${field}:** not found in NODE: ${id}. Check the field name.`);
   }
-  content = content.replace(fieldPattern, `$1${resolvedValue}`);
-  atomicWriteFileSync(filePath, content);
+  block = block.replace(fieldPattern, (_m, p1: string) => `${p1}${resolvedValue}`);
+  atomicWriteFileSync(filePath, loc.before + block + loc.after);
   return ok(`✓ Updated **${field}** for NODE: ${id} → "${resolvedValue}" in ${node.sourceFile}.`);
 }
 
@@ -633,7 +642,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             files.some(target => {
               const n = nodeFile.replace(/\\/g, "/").toLowerCase();
               const t = target.replace(/\\/g, "/").toLowerCase();
-              return n.includes(t) || t.includes(n);
+              return pathMatches(n, t);
             })
           )
         );

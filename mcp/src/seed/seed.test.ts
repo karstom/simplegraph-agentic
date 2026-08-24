@@ -13,6 +13,7 @@ import { buildContext } from "./mine.js";
 import { contentHash } from "./ids.js";
 import { assembleBundle } from "./bundle.js";
 import { mergeBundle, loadGraphNodes, renderDraft } from "./merge.js";
+import { regenerateIndex } from "../reindex.js";
 import { parseNodes } from "../parser.js";
 import { DEFAULT_MAX_COMMITS, DEFAULT_MAX_PER_TYPE, DEFAULT_MIN_CONFIDENCE, NODE_TYPES, type SeedOptions } from "./types.js";
 
@@ -335,5 +336,38 @@ test("graph_index Quick Index gains the seeded node IDs", () => {
   const index = readFileSync(join(graphRoot, "graph_index.md"), "utf-8");
   for (const id of result.added) {
     assert.ok(index.includes(id), `${id} missing from Quick Index`);
+  }
+});
+
+// The Quick Index is advertised as a *derived* view: regenerating it must
+// reproduce exactly what a merge leaves behind, or the order-independence that
+// makes parallel merges safe does not actually hold. The assertion above
+// (index.includes(id)) passes either way, which is why the divergence between
+// merge's incremental writer and reindex's rebuild went unnoticed.
+test("merge leaves graph_index.md byte-identical to a fresh reindex", () => {
+  const repo = buildFixtureRepo();
+  const graphRoot = buildGraphRoot(repo);
+  mergeBundle(mine(repo), graphRoot);
+
+  const afterMerge = readFileSync(join(graphRoot, "graph_index.md"), "utf-8");
+  regenerateIndex(graphRoot);
+  const afterReindex = readFileSync(join(graphRoot, "graph_index.md"), "utf-8");
+
+  assert.equal(afterMerge, afterReindex);
+});
+
+test("Quick Index entries are sorted, so merge order cannot change the result", () => {
+  const repo = buildFixtureRepo();
+  const graphRoot = buildGraphRoot(repo);
+  const result = mergeBundle(mine(repo), graphRoot);
+  assert.ok(result.added.length > 1, "fixture should seed more than one node");
+
+  const index = readFileSync(join(graphRoot, "graph_index.md"), "utf-8");
+  for (const line of index.split("\n")) {
+    const cells = line.split("|").map(c => c.trim());
+    if (cells.length < 4) continue;
+    const ids = cells[2].split(",").map(x => x.trim()).filter(x => /^[A-Z][A-Z0-9_]*$/.test(x));
+    if (ids.length < 2) continue;
+    assert.deepEqual(ids, [...ids].sort(), `Quick Index row not sorted: ${cells[1]}`);
   }
 });

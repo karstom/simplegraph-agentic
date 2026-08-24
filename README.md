@@ -213,6 +213,16 @@ jobs:
       - run: bash core/scripts/consistency_check.sh
 ```
 
+Node IDs are matched as `[A-Z][A-Z0-9_]*`, so the hashed IDs `sg seed` mints
+(`REG_TOKEN_LEAK_1F3A`) are compared in full rather than truncated at the first
+digit. The check uses only POSIX `grep -E` / `sed` / `awk` — no `grep -P`, which
+BSD/macOS grep does not support. A self-test runs first and exits **2** if ID
+extraction is not working on the host, so a broken toolchain fails the build
+loudly instead of reporting "all valid" after comparing two empty sets. Exit
+codes: `0` clean, `1` graph problem, `2` check could not run.
+
+Run `bash scripts/test_consistency_check.sh` to verify the gate itself.
+
 **Node updates** grow naturally: fix a bug → add a Regression node in the same commit. Notice a bug recurs → call `simplegraph_update_node` to increment `REGRESSED_N_TIMES`. The graph improves through real usage — low quality at seed time is fine.
 
 ---
@@ -261,7 +271,8 @@ Propagation is not instant: an agent's node reaches others only when its branch 
 |---|---|
 | `setup.sh` | Interactive installer and upgrader |
 | `scripts/seed_prompt.md` | One-shot prompt to bootstrap the graph from cold |
-| `scripts/consistency_check.sh` | Verify no broken edge references |
+| `scripts/consistency_check.sh` | Verify no broken edge references and no duplicate node IDs |
+| `scripts/test_consistency_check.sh` | Tests for the above (run before trusting it as a CI gate) |
 | `scripts/stale_check.sh` | Flag nodes with old dates or dead file references |
 | `scripts/auto_map.sh` | Generate structural repo map (requires Universal Ctags) |
 | `scripts/token_benchmark.sh` | Measure token efficiency vs a flat file |

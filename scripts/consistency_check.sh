@@ -14,6 +14,52 @@
 
 set -euo pipefail
 
+# Node IDs are UPPER_SNAKE_CASE and MAY CONTAIN DIGITS (e.g. REG_TOKEN_LEAK_1F3A).
+# Must stay in sync with parser.ts (/^## NODE:\s*([A-Z][A-Z0-9_]*)/) and with
+# seed/ids.ts, which mints IDs with a 4-hex-char suffix. A narrower class such as
+# [A-Z_]+ truncates every hashed ID at its first digit, which makes BOTH checks
+# below unsound: distinct IDs collapse into false duplicates, and a genuinely
+# broken edge can "resolve" against an unrelated node sharing the truncated stem.
+ID_CLASS='[A-Z][A-Z0-9_]*'
+NODE_RE="^##[[:space:]]*NODE:[[:space:]]*${ID_CLASS}"
+EDGE_RE="→[[:space:]]*${ID_CLASS}"
+STRIP_NODE_PREFIX='s/^##[[:space:]]*NODE:[[:space:]]*//'
+STRIP_EDGE_PREFIX='s/^→[[:space:]]*//'
+
+# Portability: POSIX grep -E / sed / awk only. `grep -P` is absent from BSD/macOS
+# grep, so on a stock Mac every -P call here failed; because each was written as
+# `... 2>/dev/null || true`, the failure was swallowed and the checks silently
+# compared two empty sets — printing "all valid" while verifying nothing.
+grep_or_die() {
+  local pattern="$1" file="$2" out rc=0
+  out=$(grep -Eo "$pattern" "$file") || rc=$?
+  if [ "$rc" -ge 2 ]; then
+    echo "ERROR: grep -Eo failed (exit $rc) for pattern: $pattern" >&2
+    echo "       The consistency check cannot run reliably on this system." >&2
+    exit 2
+  fi
+  printf '%s' "$out"
+}
+
+# Prove the extraction pipeline works before trusting a clean result from it.
+# Without this, any toolchain problem is indistinguishable from a healthy graph.
+canary() {
+  local fixture ids edges
+  fixture=$(mktemp "${TMPDIR:-/tmp}/sg_canary.XXXXXX")
+  printf '## NODE: REG_CANARY_1F3A\n**Edges:**\n- CAUSED_BY → INV_CANARY_2B\n' > "$fixture"
+  ids=$(grep_or_die "$NODE_RE" "$fixture" | sed -E "$STRIP_NODE_PREFIX")
+  edges=$(grep_or_die "$EDGE_RE" "$fixture" | sed -E "$STRIP_EDGE_PREFIX")
+  rm -f "$fixture"
+  if [ "$ids" != "REG_CANARY_1F3A" ] || [ "$edges" != "INV_CANARY_2B" ]; then
+    echo "ERROR: consistency check self-test failed — ID extraction is broken." >&2
+    echo "       expected node id 'REG_CANARY_1F3A', got '$ids'" >&2
+    echo "       expected edge target 'INV_CANARY_2B', got '$edges'" >&2
+    echo "       Refusing to report a result that would be meaningless." >&2
+    exit 2
+  fi
+}
+canary
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 SHARED_DIR_ARG=""
@@ -53,10 +99,37 @@ EDGE_TARGETS=$(mktemp /tmp/sg_edge_targets.XXXXXX)
 NODE_IDS=$(mktemp /tmp/sg_node_ids.XXXXXX)
 trap 'rm -f "${CORE_STRIPPED}" "${SHARED_STRIPPED}" "${ALL_STRIPPED}" "${EDGE_TARGETS}" "${NODE_IDS}"' EXIT
 
-# Strip HTML comments and fenced code blocks (template examples) from each
-# hand-authored .md file in a graph dir and append to the given output file.
-# Excludes generated/gitignored files. Processes files individually to avoid a
-# perl slurp stall on large concatenations.
+# Strip fenced code blocks (format templates such as "## NODE: YOUR_NODE_ID")
+# and HTML comments (commented-out examples) from each hand-authored .md file in
+# a graph dir, appending to the given output file. Excludes generated/gitignored
+# files. Uses POSIX awk rather than perl, and runs once per file so fence and
+# comment state never leak across files.
+strip_noise() {
+  awk '
+    /^[[:space:]]*(```|~~~)/ { fence = !fence; next }
+    fence { next }
+    {
+      line = $0
+      while (1) {
+        if (incomment) {
+          i = index(line, "-->")
+          if (i == 0) { line = ""; break }
+          line = substr(line, i + 3); incomment = 0
+        } else {
+          i = index(line, "<!--")
+          if (i == 0) break
+          head = substr(line, 1, i - 1)
+          rest = substr(line, i + 4)
+          e = index(rest, "-->")
+          if (e == 0) { line = head; incomment = 1; break }
+          line = head substr(rest, e + 3)
+        }
+      }
+      print line
+    }
+  ' "$1"
+}
+
 strip_graph() {
   local dir="$1" out="$2"
   : > "${out}"
@@ -65,7 +138,7 @@ strip_graph() {
     case "$(basename "$f")" in
       auto_map.md|.scratchpad.md) continue ;;
     esac
-    perl -0777 -pe 's/<!--.*?-->//gs; s/^```.*?^```//gms' < "$f" >> "${out}"
+    strip_noise "$f" >> "${out}"
   done < <(find "$dir" -name '*.md' -not -name 'auto_map.md' -not -name '.scratchpad.md' | sort)
 }
 
@@ -75,15 +148,15 @@ cat "${CORE_STRIPPED}" "${SHARED_STRIPPED}" > "${ALL_STRIPPED}"
 
 # Node IDs and edge targets span both graphs, so cross-graph edges
 # (core → shared, shared → core) resolve instead of reading as broken.
-grep -oP '→ \K[A-Z_]+' "${ALL_STRIPPED}" 2>/dev/null | sort -u > "${EDGE_TARGETS}" || true
-grep -oP '## NODE: \K[A-Z_]+' "${ALL_STRIPPED}" 2>/dev/null | sort -u > "${NODE_IDS}" || true
+grep_or_die "$EDGE_RE" "${ALL_STRIPPED}" | sed -E "$STRIP_EDGE_PREFIX" | sort -u > "${EDGE_TARGETS}"
+grep_or_die "$NODE_RE" "${ALL_STRIPPED}" | sed -E "$STRIP_NODE_PREFIX" | sort   > "${NODE_IDS}"
 
 STATUS=0
 [ -n "$SHARED_DIR" ] && echo "Checking core/ + shared/ ($SHARED_DIR)" || echo "Checking core/"
 
 # 1. Duplicate node IDs (across both graphs). Two agents or two merged branches
 #    can independently mint the same ID; git merges the files with no conflict.
-DUPES=$(grep -oP '## NODE: \K[A-Z_]+' "${ALL_STRIPPED}" 2>/dev/null | sort | uniq -d || true)
+DUPES=$(uniq -d < "${NODE_IDS}")
 if [ -n "$DUPES" ]; then
   echo "✗ Duplicate node IDs found (same ID defined more than once):"
   echo "$DUPES"
@@ -92,7 +165,10 @@ if [ -n "$DUPES" ]; then
 fi
 
 # 2. Broken edge references (targets with no matching NODE in either graph).
-BROKEN=$(comm -23 "${EDGE_TARGETS}" "${NODE_IDS}")
+UNIQUE_IDS=$(mktemp "${TMPDIR:-/tmp}/sg_uniq_ids.XXXXXX")
+sort -u < "${NODE_IDS}" > "${UNIQUE_IDS}"
+BROKEN=$(comm -23 "${EDGE_TARGETS}" "${UNIQUE_IDS}")
+rm -f "${UNIQUE_IDS}"
 if [ -n "$BROKEN" ]; then
   echo "✗ Broken edge references found (targets with no matching NODE):"
   echo "$BROKEN"
@@ -120,6 +196,8 @@ if [ -n "$SHARED_DIR" ] && [ -s "${SHARED_STRIPPED}" ]; then
 fi
 
 if [ "$STATUS" -eq 0 ]; then
-  echo "✓ All edge references are valid and all node IDs are unique."
+  NODE_COUNT=$(grep -c . "${NODE_IDS}" || true)
+  EDGE_COUNT=$(grep -c . "${EDGE_TARGETS}" || true)
+  echo "✓ ${NODE_COUNT} node(s), ${EDGE_COUNT} distinct edge target(s): all references resolve, all IDs unique."
 fi
 exit "$STATUS"

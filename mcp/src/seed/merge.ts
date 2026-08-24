@@ -10,7 +10,9 @@
 
 import * as fs from "fs";
 import * as path from "path";
-import { parseNodes, formatNode, type GraphNode } from "../parser.js";
+import { parseNodes, formatNode, findNodeBlock, type GraphNode } from "../parser.js";
+import { atomicWriteFileSync, withGraphLock } from "../fsutil.js";
+import { regenerateIndex } from "../reindex.js";
 import { contentHash } from "./ids.js";
 import type { DraftBundle, DraftNode, SeedState } from "./types.js";
 import { SEED_VERSION } from "./types.js";
@@ -98,67 +100,42 @@ function isHandEdited(existing: GraphNode): boolean {
 }
 
 function replaceNodeBlock(content: string, id: string, newBlock: string): string {
-  const start = content.indexOf(`## NODE: ${id}`);
-  if (start === -1) return content;
-  const nextIdx = content.indexOf("\n## NODE:", start + 1);
-  // The block may end at the next node or a trailing separator before it.
-  let end = nextIdx !== -1 ? nextIdx : content.length;
-  let block = content.slice(start, end);
+  // findNodeBlock anchors on a whole id, so replacing REG_X cannot match the
+  // start of ## NODE: REG_XY and overwrite the wrong node.
+  const loc = findNodeBlock(content, id);
+  if (loc === null) return content;
+  let block = loc.block;
+  let after = loc.after;
+  // findNodeBlock ends the block at the next heading; the logic below expects
+  // the boundary just before that heading's newline, as the old scan produced.
+  if (after.startsWith("## NODE:") && block.endsWith("\n")) {
+    block = block.slice(0, -1);
+    after = "\n" + after;
+  }
   // Keep any trailing separator/whitespace outside the replacement.
   const tail = block.match(/(\n+---\s*)$/)?.[1] ?? "";
   if (tail) block = block.slice(0, block.length - tail.length);
-  return content.slice(0, start) + newBlock + "\n" + tail.replace(/^\n+/, "\n") + content.slice(end);
+  return loc.before + newBlock + "\n" + tail.replace(/^\n+/, "\n") + after;
 }
 
 function appendNodeBlock(filePath: string, block: string): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   const existing = fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf-8") : "";
-  fs.writeFileSync(
+  atomicWriteFileSync(
     filePath,
-    existing.trim() ? `${existing.trimEnd()}\n\n---\n\n${block}\n` : `${block}\n`,
-    "utf-8"
+    existing.trim() ? `${existing.trimEnd()}\n\n---\n\n${block}\n` : `${block}\n`
   );
 }
 
-function updateQuickIndex(graphRoot: string, merged: DraftNode[]): string[] {
-  const warnings: string[] = [];
-  const indexPath = path.join(graphRoot, "graph_index.md");
-  if (!fs.existsSync(indexPath)) return ["graph_index.md not found — Quick Index not updated"];
-  let content = fs.readFileSync(indexPath, "utf-8");
-
-  const categoryMap: Record<string, string> = {
-    Component: "Components",
-    Invariant: "Invariants",
-    Regression: "Active Regressions",
-    Decision: "Decisions",
-    Watchlist: "Watchlists & Open Issues",
-  };
-
-  const byType = new Map<string, DraftNode[]>();
-  for (const d of merged) {
-    if (!byType.has(d.type)) byType.set(d.type, []);
-    byType.get(d.type)!.push(d);
-  }
-
-  for (const [type, drafts] of [...byType.entries()].sort()) {
-    const rowLabel = categoryMap[type];
-    const rowPattern = new RegExp(`(\\|\\s*\\*\\*${rowLabel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\*\\*\\s*\\|)([^|]*)(\\|)`, "i");
-    const m = content.match(rowPattern);
-    if (!m) {
-      warnings.push(`Quick Index row "${rowLabel}" not found; add ${drafts.length} ID(s) manually`);
-      continue;
-    }
-    const cleaned = m[2].replace(/_\([^)]*\)_/g, "").trim();
-    const present = new Set(cleaned.split(",").map(s => s.trim()).filter(Boolean));
-    for (const d of drafts) present.add(d.id);
-    const updated = [...present].join(", ");
-    content = content.replace(rowPattern, (_s, prefix, _mid, suffix) => `${prefix} ${updated} ${suffix}`);
-  }
-  fs.writeFileSync(indexPath, content, "utf-8");
-  return warnings;
+export function mergeBundle(bundle: DraftBundle, graphRoot: string): MergeResult {
+  // Hold the graph lock across the entire merge. Seeding is a long
+  // read-modify-write over the same files the MCP server mutates; without the
+  // lock an `sg seed` run racing an agent's add_node/update_node can lose one
+  // side's changes entirely.
+  return withGraphLock(graphRoot, () => mergeBundleLocked(bundle, graphRoot));
 }
 
-export function mergeBundle(bundle: DraftBundle, graphRoot: string): MergeResult {
+function mergeBundleLocked(bundle: DraftBundle, graphRoot: string): MergeResult {
   const result: MergeResult = { added: [], updated: [], unchanged: [], conflicts: [], indexWarnings: [] };
   const existingNodes = loadGraphNodes(graphRoot);
   const existingById = new Map(existingNodes.map(n => [n.id, n]));
@@ -167,7 +144,6 @@ export function mergeBundle(bundle: DraftBundle, graphRoot: string): MergeResult
   // incoming node so consistency_check.sh stays green.
   const knownIds = new Set<string>([...existingById.keys(), ...bundle.nodes.map(n => n.id)]);
 
-  const mergedDrafts: DraftNode[] = [];
   for (const draft of bundle.nodes) {
     draft.edges = draft.edges.filter(e => knownIds.has(e.target));
     const rendered = renderDraft(draft);
@@ -176,7 +152,6 @@ export function mergeBundle(bundle: DraftBundle, graphRoot: string): MergeResult
     if (!existing) {
       appendNodeBlock(path.join(graphRoot, targetFileForType(draft.type, draft.id)), rendered);
       result.added.push(draft.id);
-      mergedDrafts.push(draft);
       continue;
     }
 
@@ -195,12 +170,16 @@ export function mergeBundle(bundle: DraftBundle, graphRoot: string): MergeResult
     // Seeded, pristine, and the draft changed → safe to update in place.
     const filePath = path.join(graphRoot, existing.sourceFile);
     const content = fs.readFileSync(filePath, "utf-8");
-    fs.writeFileSync(filePath, replaceNodeBlock(content, draft.id, rendered), "utf-8");
+    atomicWriteFileSync(filePath, replaceNodeBlock(content, draft.id, rendered));
     result.updated.push(draft.id);
-    mergedDrafts.push(draft);
   }
 
-  result.indexWarnings = updateQuickIndex(graphRoot, mergedDrafts.filter(d => result.added.includes(d.id)));
+  // Regenerate the Quick Index rather than appending to them. The index is a
+  // derived view (see reindex.ts): an incremental writer left it in a different
+  // state than a rebuild would produce — unsorted, and never dropping a node
+  // removed elsewhere — which defeats the order-independence the derived-index
+  // design exists to provide. One writer, one source of truth.
+  result.indexWarnings = regenerateIndex(graphRoot).warnings;
 
   // High-water mark: informational for incremental runs and reporting.
   const prior = readState(graphRoot);
@@ -211,7 +190,7 @@ export function mergeBundle(bundle: DraftBundle, graphRoot: string): MergeResult
     lastSeededDate: bundle.headDate,
     nodesSeeded: [...nodesSeeded].sort(),
   };
-  fs.writeFileSync(path.join(graphRoot, STATE_FILE), JSON.stringify(state, null, 2) + "\n", "utf-8");
+  atomicWriteFileSync(path.join(graphRoot, STATE_FILE), JSON.stringify(state, null, 2) + "\n");
 
   return result;
 }
