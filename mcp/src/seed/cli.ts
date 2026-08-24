@@ -204,7 +204,8 @@ export async function runSeed(argv: string[]): Promise<number> {
   }
 
   const ctx = buildContext(opts.repoPath, { since: opts.since, maxCommits: opts.maxCommits });
-  const bundle = assembleBundle(ctx, opts);
+
+  let bundle = assembleBundle(ctx, opts);
 
   const prior = readState(opts.graphRoot);
   process.stdout.write(summarize(bundle) + "\n\n");

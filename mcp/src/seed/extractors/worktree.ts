@@ -47,6 +47,29 @@ function groupByText(hits: CommentHit[]): Map<string, CommentHit[]> {
 }
 
 const INVARIANT_COMMENT = /\b(MUST NOT|MUST|NEVER|ALWAYS|DO NOT|INVARIANT)\b/;
+/**
+ * Is `index` inside a string literal on this line?
+ *
+ * Test *fixtures* embed test declarations as data — seed.test.ts builds a fake
+ * repo containing `"src/auth.test.ts": 'test("never persists token after
+ * logout", ...)'`. Matching that yielded a real Invariant node about
+ * authentication in a repo with no auth. A declaration is only a declaration
+ * when it is code, not a quoted string.
+ */
+function insideStringLiteral(line: string, index: number): boolean {
+  let quote: string | null = null;
+  for (let i = 0; i < index; i++) {
+    const ch = line[i];
+    if (ch === "\\") { i++; continue; }          // escape: skip next char
+    if (quote === null) {
+      if (ch === '"' || ch === "'" || ch === "`") quote = ch;
+    } else if (ch === quote) {
+      quote = null;
+    }
+  }
+  return quote !== null;
+}
+
 const TEST_NAME = /\b(?:test|it)\s*\(\s*["'`](.{10,140}?)["'`]/g;
 const INVARIANT_TEST_NAME = /\b(never|always|must|only|cannot|can't|should ?not|shouldn't|reject\w*|refus\w*|block\w*|requir\w*|forbid\w*|denie[sd]|deny|prevent\w*|survives?)\b/i;
 
@@ -93,6 +116,7 @@ export const invariantExtractor: Extractor = {
       const lines = content.split("\n");
       for (let i = 0; i < lines.length; i++) {
         for (const m of lines[i].matchAll(TEST_NAME)) {
+          if (insideStringLiteral(lines[i], m.index)) continue; // fixture data, not a real test
           if (INVARIANT_TEST_NAME.test(m[1])) testHits.push({ file: f, line: i + 1, text: m[1] });
         }
       }
