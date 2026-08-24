@@ -12,3 +12,6 @@ core/.seed_state.json
 core/.sg.lock
 shared/.sg.lock
 .*.tmp
+
+# Local tool caches — machine-specific, never commit
+.wrangler/
