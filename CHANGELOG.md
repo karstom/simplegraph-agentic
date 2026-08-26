@@ -1,5 +1,89 @@
 # Changelog
 
+## [Unreleased]
+
+### One-line install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/karstom/simplegraph-agentic/main/install.sh | bash
+```
+
+- **`install.sh`.** Fetches simplegraph into `~/.simplegraph`, builds and wires
+  the MCP server when Node 18+ is present, and hands off to `setup.sh`. A
+  persistent home is required rather than incidental: `setup.sh` writes an
+  `.mcp.json` pointing at `<home>/mcp/dist/index.js`, so a temp checkout would
+  leave a dangling server path. Re-running the command upgrades in place.
+  Degrades cleanly without Node — the markdown graph installs and MCP is
+  skipped. `SIMPLEGRAPH_REPO_URL` points it at a fork.
+- **`setup.sh` is scriptable.** `--tool`, `--dir`, `--mcp`/`--no-mcp`,
+  `--multi-repo`, `--upgrade`/`--reinstall`, `--yes`. The AI tool is
+  auto-detected from the project (`CLAUDE.md`, `.cursor/`, copilot
+  instructions, `.zed/`, `AGENTS.md`) so the common case needs no flag.
+  `--yes` can never trigger the destructive reinstall; that still requires an
+  explicit flag or a typed confirmation.
+- **Prompts survive a pipe.** Answers are read from stdin when stdin carries
+  them, from `/dev/tty` when stdin is an exhausted script stream (the
+  `curl … | bash` case), and default safely when there is no terminal at all.
+  Getting this order wrong breaks one of the three in a way that hangs, so all
+  three are covered by tests.
+
+### Cross-platform
+
+Verified on all three supported platforms:
+
+| Platform | Notes |
+|---|---|
+| **macOS** | Test suite green under the **system `/bin/bash` 3.2**, not a Homebrew bash — so the bash 3.2 constraints this is written to are actually exercised, and the BSD `sed`/`date` paths are real. |
+| **WSL2 (Ubuntu)** | Including projects on a Windows drive under `/mnt/c`. |
+| **Ubuntu 24.04 VM** | Kernel 6.8, bash 5.2, git 2.43, Node 18.19, Universal Ctags 6.1 (snap), no npm. |
+
+On the Ubuntu VM, from a clean clone: 42/42 adapter tests, 12/12 gate tests,
+one-line install, exclusion flags, and symbol staleness all pass. Two paths
+that had only been reasoned about were exercised for real — **Node present but
+npm absent** (the MCP build is skipped and no `.mcp.json` is written, rather
+than failing the install), and **Node at exactly the v18 minimum**.
+
+Verified on WSL with the project on `/mnt/c`:
+
+- The installer detects WSL from `/proc/version` and warns about CRLF when the
+  project is on a Windows drive.
+- Scripts execute from `drvfs`, which mounts without the `metadata` option, so
+  Linux permission bits are absent and everything reads as `0777`.
+- The graph's atomic writes (temp file + rename) and its cross-process advisory
+  lock behave correctly on 9p/drvfs: eight concurrent `REGRESSED_N_TIMES`
+  increments advanced the counter 1 → 9 with no lost updates, no torn file, and
+  no stray temp or lock files. That is the multi-agent safety guarantee holding
+  on a filesystem it had never been tested against.
+
+- **bash 3.2 compatible** — no `mapfile`, associative arrays, or `${var,,}`,
+  because that is what macOS ships as `/bin/bash`.
+- **`auto_map.sh` now verifies it found Universal Ctags.** macOS ships a
+  BSD/Xcode `ctags` that satisfies `command -v` but cannot emit JSON tags; it
+  failed into `|| true` and the run ended with "No symbols found", which reads
+  as "your project has no code" rather than "this is the wrong ctags".
+Running against macOS is what surfaced two bash 3.2 bugs that bash 4.4+ hides
+entirely: `token_benchmark.sh` and `auto_map.sh` both expanded a possibly-empty
+array as `"${arr[@]}"`, which bash 3.2 treats as an unbound variable under
+`set -u` and aborts on. Both now use the portable `${arr[@]+"${arr[@]}"}` guard.
+The first macOS run also failed six tests that were entirely the harness —
+`timeout` and `setsid` do not exist there — including one assertion that passed
+for the wrong reason because a missing command still exits non-zero.
+
+- **Root `.gitattributes` pins `eol=lf`.** Confirmed both halves on WSL: a
+  CRLF copy of `setup.sh` fails with exactly `$'\r': command not found`
+  followed by `set: pipefail: invalid option name`, and a fresh
+  `git clone -c core.autocrlf=true` of this branch onto `/mnt/c` now checks out
+  LF regardless, because `.gitattributes` overrides the client setting.
+
+### Documentation
+
+- **README rewritten as a landing page** — 409 lines to 149. It now opens with
+  the tool catching a real six-recurrence regression, then the install command.
+  Previously a reader met a token-efficiency table at line 17 and no install
+  command until line 72.
+- **Reference material moved to `docs/`** — seeding, graph format, maintenance,
+  code graphs, and multi-agent, all linked from the README.
+
 ## [0.5.0] — 2026-08-26
 
 ### Blast-radius anchoring — compose with a structural code graph

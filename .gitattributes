@@ -1,0 +1,13 @@
+# Shell scripts and graph files must check out with LF endings on every platform.
+#
+# Without this, a clone made by Git for Windows (core.autocrlf=true) writes CRLF,
+# and the same working tree opened under WSL fails on every script with a bare
+# "\r: command not found" — the shebang line itself ends in \r. The graph files
+# are listed too so `merge=union` in core/.gitattributes cannot produce a file
+# with mixed endings.
+*.sh    text eol=lf
+*.bash  text eol=lf
+*.md    text eol=lf
+*.json  text eol=lf
+*.yaml  text eol=lf
+*.yml   text eol=lf

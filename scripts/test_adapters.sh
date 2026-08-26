@@ -150,6 +150,100 @@ for script in consistency_check.sh stale_check.sh auto_map.sh token_benchmark.sh
   fi
 done
 
+# ── portable process limits ───────────────────────────────────────────────────
+# `timeout` is GNU coreutils and `setsid` is util-linux: macOS ships neither.
+# Using them bare made three test groups fail on macOS for a reason that had
+# nothing to do with the code under test — and worse, made
+# "rejects unknown options" pass for the wrong reason, because that assertion
+# expects a non-zero exit and `timeout: command not found` is non-zero.
+if command -v timeout >/dev/null 2>&1; then
+  TIMEOUT_CMD="timeout"
+elif command -v gtimeout >/dev/null 2>&1; then
+  TIMEOUT_CMD="gtimeout"          # coreutils via Homebrew
+else
+  TIMEOUT_CMD=""
+fi
+
+# run_limited SECONDS COMMAND... — enforce a wall-clock limit anywhere.
+# Falls back to a background process plus a poll loop when no timeout binary
+# exists, so a hang is still caught rather than blocking the suite forever.
+# Returns 124 on timeout, matching GNU timeout.
+run_limited() {
+  local secs="$1"; shift
+  if [ -n "${TIMEOUT_CMD}" ]; then
+    "${TIMEOUT_CMD}" "${secs}" "$@"
+    return $?
+  fi
+  "$@" &
+  local pid=$! waited=0 rc=0
+  while kill -0 "${pid}" 2>/dev/null && [ "${waited}" -lt "${secs}" ]; do
+    sleep 1; waited=$((waited + 1))
+  done
+  if kill -0 "${pid}" 2>/dev/null; then
+    kill -9 "${pid}" 2>/dev/null || true
+    wait "${pid}" 2>/dev/null || true
+    return 124
+  fi
+  wait "${pid}"; rc=$?
+  return "${rc}"
+}
+
+# ── Non-interactive install (the one-liner path) ──────────────────────────────
+# setup.sh must be drivable three ways, and all three have broken before:
+#   • piped answers        printf "n\n1\n" | bash setup.sh DIR      (tested above)
+#   • explicit flags       bash setup.sh DIR --tool X --yes
+#   • no terminal at all   setsid ... < /dev/null                  (CI)
+# The failure mode is a hang, so every case here runs under `timeout`.
+section "Non-interactive install (flags)"
+TMPDIR_NI=$(mktemp -d /tmp/sg_test_ni.XXXXXX)
+trap "rm -rf ${TMPDIR_AG} ${TMPDIR_NI}" EXIT
+
+if run_limited 120 bash "${REPO_DIR}/setup.sh" "${TMPDIR_NI}" --tool claude-code --yes \
+     > /tmp/sg_setup_ni.txt 2>&1; then
+  pass "setup.sh --tool claude-code --yes completes without input"
+else
+  fail "setup.sh with flags failed or hung (see /tmp/sg_setup_ni.txt)"
+fi
+[ -f "${TMPDIR_NI}/CLAUDE.md" ] && pass "flags installed the named adapter" \
+                               || fail "flags did not install CLAUDE.md"
+[ -d "${TMPDIR_NI}/core" ]      && pass "flags installed the graph" \
+                               || fail "flags did not install core/"
+
+section "Non-interactive install (no terminal)"
+TMPDIR_CI=$(mktemp -d /tmp/sg_test_ci.XXXXXX)
+trap "rm -rf ${TMPDIR_AG} ${TMPDIR_NI} ${TMPDIR_CI}" EXIT
+
+# setsid detaches from the controlling terminal so /dev/tty is unavailable, and
+# every prompt must fall through to its default rather than blocking forever.
+# There is no macOS equivalent, so skip rather than report a failure that is
+# really a missing tool.
+if ! command -v setsid >/dev/null 2>&1; then
+  skip "no-terminal test needs setsid (util-linux); not available on this platform"
+elif run_limited 120 setsid bash "${REPO_DIR}/setup.sh" "${TMPDIR_CI}" --tool skip \
+       < /dev/null > /tmp/sg_setup_ci.txt 2>&1; then
+  pass "setup.sh completes with no terminal available"
+  [ -d "${TMPDIR_CI}/core" ] && pass "graph installed without a terminal" \
+                             || fail "core/ missing after headless install"
+else
+  fail "setup.sh hung or failed without a terminal (see /tmp/sg_setup_ci.txt)"
+fi
+
+section "Installer entrypoint"
+if [ -f "${REPO_DIR}/install.sh" ]; then
+  pass "install.sh present"
+  bash -n "${REPO_DIR}/install.sh" 2>/dev/null && pass "install.sh parses" \
+                                               || fail "install.sh has a syntax error"
+  run_limited 30 bash "${REPO_DIR}/install.sh" --help >/dev/null 2>&1 \
+    && pass "install.sh --help exits cleanly" || fail "install.sh --help failed"
+  if run_limited 30 bash "${REPO_DIR}/install.sh" --bogus >/dev/null 2>&1; then
+    fail "install.sh accepted an unknown option"
+  else
+    pass "install.sh rejects unknown options"
+  fi
+else
+  fail "install.sh not found"
+fi
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""
 echo "═══════════════════════════════════════════════════"

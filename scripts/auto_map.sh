@@ -81,10 +81,24 @@ fi
 OUTPUT="${OUTPUT_DIR}/auto_map.md"
 
 # ── verify deps ───────────────────────────────────────────────────────────────
-if ! command -v ctags &>/dev/null; then
-  echo "ERROR: ctags not found. Install Universal Ctags first."
-  echo "  Debian/Ubuntu: sudo apt install universal-ctags"
-  echo "  macOS:         brew install universal-ctags"
+if ! command -v ctags >/dev/null 2>&1; then
+  echo "ERROR: ctags not found. Install Universal Ctags first." >&2
+  echo "  Debian/Ubuntu: sudo apt install universal-ctags" >&2
+  echo "  macOS:         brew install universal-ctags" >&2
+  echo "  Fedora/RHEL:   sudo dnf install ctags" >&2
+  exit 1
+fi
+
+# macOS ships a BSD/Xcode `ctags` that answers `command -v` but does not support
+# --output-format=json. Left unchecked it exits non-zero into `|| true`, and the
+# run ends with "No symbols found" — which reads as "your project has no code"
+# rather than "this is the wrong ctags". Name the actual problem instead.
+if ! ctags --version 2>/dev/null | grep -qi "universal ctags"; then
+  echo "ERROR: found '$(command -v ctags)', but it is not Universal Ctags." >&2
+  echo "       macOS ships a BSD/Xcode ctags that cannot emit JSON tags." >&2
+  echo "  macOS: brew install universal-ctags" >&2
+  echo "         (then ensure its bin directory precedes /usr/bin in PATH)" >&2
+  echo "  Check: ctags --version   # should say 'Universal Ctags'" >&2
   exit 1
 fi
 
@@ -106,11 +120,14 @@ EXCLUDE_PATTERNS="${SIMPLEGRAPH_EXCLUDE_PATTERNS:-$DEFAULT_EXCLUDE_PATTERNS}"
 if [ -n "${DROP_EXCLUDES}" ]; then
   KEPT=""
   IFS=',' read -ra _cur <<< "${EXCLUDE_DIRS}"
-  for d in "${_cur[@]}"; do
+  # ${arr[@]+"${arr[@]}"} is the portable empty-array guard: bash 3.2 (macOS)
+  # aborts on a bare "${arr[@]}" under `set -u` when the array is empty, which
+  # is reachable here by --include'ing every default.
+  for d in ${_cur[@]+"${_cur[@]}"}; do
     [ -n "$d" ] || continue
     drop=false
     IFS=',' read -ra _drop <<< "${DROP_EXCLUDES}"
-    for x in "${_drop[@]}"; do [ "$d" = "$x" ] && drop=true && break; done
+    for x in ${_drop[@]+"${_drop[@]}"}; do [ "$d" = "$x" ] && drop=true && break; done
     [ "$drop" = true ] || KEPT="${KEPT}${KEPT:+,}$d"
   done
   EXCLUDE_DIRS="${KEPT}"
@@ -133,7 +150,7 @@ CTAGS_OPTS=(
 
 # Add directory exclusions
 IFS=',' read -ra DIRS <<< "$EXCLUDE_DIRS"
-for dir in "${DIRS[@]}"; do
+for dir in ${DIRS[@]+"${DIRS[@]}"}; do
   CTAGS_OPTS+=(--exclude="${dir}")
 done
 
@@ -166,7 +183,26 @@ ctags "${CTAGS_OPTS[@]}" "${PROJECT_DIR}" 2>/dev/null > "${TAGS_FILE}" || true
   echo ""
 
   if [ ! -s "${TAGS_FILE}" ]; then
-    echo "> No symbols found. Ensure your project has source files ctags can parse."
+    echo "> No symbols found."
+    echo ">"
+    # "Your project has no parseable code" is almost never the real cause. The
+    # common one on Ubuntu is the snap build of universal-ctags: it is confined,
+    # so it cannot read /tmp at all and refuses a top-level ~/.dotdir, failing
+    # with "cannot open input file" into the `|| true` above. Name it here
+    # rather than blaming the project.
+    if command -v ctags >/dev/null 2>&1 && case "$(command -v ctags)" in /snap/*) true ;; *) false ;; esac; then
+      echo "> ctags is the snap build ($(command -v ctags)), which is sandboxed:"
+      echo ">   • it cannot read /tmp at all"
+      echo ">   • it cannot read a top-level dot-directory such as ~/.cache"
+      echo "> Your project is at: ${PROJECT_DIR}"
+      echo "> If that path is affected, either move the project under \$HOME or"
+      echo "> install an unconfined build:  sudo apt install universal-ctags"
+    else
+      echo "> Check that ${PROJECT_DIR} contains source files in a language ctags"
+      echo "> parses, and that they are not all excluded. Current skip list:"
+      echo ">   ${EXCLUDE_DIRS}"
+      echo "> Use --include DIR to un-skip one."
+    fi
     exit 0
   fi
 
