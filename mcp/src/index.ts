@@ -749,8 +749,11 @@ export function handleSeedCandidates(
 
 // ── MCP Server ────────────────────────────────────────────────────────────────
 
+/** Single source for the version this server reports and prints. */
+const SERVER_VERSION = "0.5.0";
+
 const server = new Server(
-  { name: "simplegraph-mcp", version: "0.4.0" },
+  { name: "simplegraph-mcp", version: SERVER_VERSION },
   { capabilities: { tools: {} } }
 );
 
@@ -1298,7 +1301,7 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   process.stderr.write(
-    `simplegraph-mcp v0.4.0 ready\n` +
+    `simplegraph-mcp v${SERVER_VERSION} ready\n` +
     `  GRAPH_ROOT:  ${GRAPH_ROOT}\n` +
     (SHARED_ROOT ? `  SHARED_ROOT: ${SHARED_ROOT}\n` : "") +
     (DEFAULT_AUTHOR ? `  AUTHOR:      ${DEFAULT_AUTHOR}\n` : "") +
