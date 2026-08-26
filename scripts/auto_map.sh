@@ -180,7 +180,26 @@ ctags "${CTAGS_OPTS[@]}" "${PROJECT_DIR}" 2>/dev/null > "${TAGS_FILE}" || true
   echo ""
 
   if [ ! -s "${TAGS_FILE}" ]; then
-    echo "> No symbols found. Ensure your project has source files ctags can parse."
+    echo "> No symbols found."
+    echo ">"
+    # "Your project has no parseable code" is almost never the real cause. The
+    # common one on Ubuntu is the snap build of universal-ctags: it is confined,
+    # so it cannot read /tmp at all and refuses a top-level ~/.dotdir, failing
+    # with "cannot open input file" into the `|| true` above. Name it here
+    # rather than blaming the project.
+    if command -v ctags >/dev/null 2>&1 && case "$(command -v ctags)" in /snap/*) true ;; *) false ;; esac; then
+      echo "> ctags is the snap build ($(command -v ctags)), which is sandboxed:"
+      echo ">   • it cannot read /tmp at all"
+      echo ">   • it cannot read a top-level dot-directory such as ~/.cache"
+      echo "> Your project is at: ${PROJECT_DIR}"
+      echo "> If that path is affected, either move the project under \$HOME or"
+      echo "> install an unconfined build:  sudo apt install universal-ctags"
+    else
+      echo "> Check that ${PROJECT_DIR} contains source files in a language ctags"
+      echo "> parses, and that they are not all excluded. Current skip list:"
+      echo ">   ${EXCLUDE_DIRS}"
+      echo "> Use --include DIR to un-skip one."
+    fi
     exit 0
   fi
 

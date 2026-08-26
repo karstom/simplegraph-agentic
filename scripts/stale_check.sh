@@ -185,8 +185,25 @@ echo ""
 echo "── Nodes anchored to symbols not found in auto_map.md ──"
 
 AUTO_MAP="${CORE_DIR}/auto_map.md"
+# An auto_map that exists but carries no symbols is worse than one that is
+# absent: every anchored symbol would be reported missing, burying any real
+# drift under a wall of false positives. That state is easy to reach — a
+# sandboxed snap ctags that could not read the project emits a header-only map.
+# Treat "no symbols at all" the same as "no map".
+# `grep -c` prints 0 AND exits 1 when there are no matches, so `|| echo 0`
+# would append a second zero and make the numeric test below fail outright.
+# Assign, then correct the value only if the assignment itself failed.
+MAP_SYMBOLS=0
+if [ -f "${AUTO_MAP}" ]; then
+  MAP_SYMBOLS=$(grep -c '`' "${AUTO_MAP}" 2>/dev/null) || MAP_SYMBOLS=0
+fi
+
 if [ ! -f "${AUTO_MAP}" ]; then
   echo "  — Skipped: no auto_map.md. Generate it with: bash scripts/auto_map.sh"
+elif [ "${MAP_SYMBOLS}" -eq 0 ]; then
+  echo "  — Skipped: auto_map.md contains no symbols, so every anchor would be"
+  echo "    reported missing. Regenerate it and check for errors:"
+  echo "      bash scripts/auto_map.sh"
 else
   MISSING_SYMS=$(find "${CORE_DIR}" -name '*.md' -not -name 'auto_map.md' -not -name '.scratchpad.md' | sort | while IFS= read -r mdfile; do
     strip_noise "$mdfile" \
