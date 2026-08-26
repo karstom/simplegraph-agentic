@@ -81,6 +81,7 @@ export function renderDraft(d: DraftNode): string {
     tags: d.tags,
     edges: d.edges.map(e => `${e.edgeType} → ${e.target}: ${e.explanation}`),
     files: d.files,
+    paths: d.paths,
     lastUpdated: d.lastUpdated,
     regressedNTimes: d.regressedNTimes,
     provenance,

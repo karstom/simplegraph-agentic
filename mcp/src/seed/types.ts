@@ -4,7 +4,7 @@
 // them → the bundle applies quality controls (confidence floor, per-type caps,
 // dedupe) → the merge step writes surviving drafts into core/ graph files.
 
-export const SEED_VERSION = "0.3.0";
+export const SEED_VERSION = "0.4.0";
 
 export type NodeType = "Component" | "Invariant" | "Regression" | "Decision" | "Watchlist";
 
@@ -35,6 +35,14 @@ export interface DraftNode {
   summary: string;
   tags: string[];
   files: string[];
+  /**
+   * Directory prefixes the node owns — Component nodes only. The structure
+   * extractor derives a Component *from* a directory, so leaving this unset
+   * meant the one node type that always knows its own directory shipped with
+   * no path anchor, and check_files could never fire it for a file the
+   * component plainly owns.
+   */
+  paths?: string[];
   edges: DraftEdge[];
   /** 0..1 — extractor's confidence that this node is signal, not noise. */
   confidence: number;

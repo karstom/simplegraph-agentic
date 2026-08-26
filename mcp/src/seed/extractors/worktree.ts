@@ -277,6 +277,9 @@ export const componentExtractor: Extractor = {
         ),
         tags: ["seeded", "structure"],
         files: [manifest ?? files[0], ...files.slice(0, 2).filter(f => f !== manifest)].filter(Boolean).slice(0, 3),
+        // The directory this component was derived from: three sample files
+        // cannot represent a 275-file module, but the directory can.
+        paths: [dir],
         edges: [],
         confidence: 0.8,
         lastUpdated: ctx.headDate,
