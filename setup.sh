@@ -1,13 +1,95 @@
 #!/usr/bin/env bash
 # simplegraph-agentic setup
 # Installs the memory graph scaffold into an existing project.
-# Usage: bash setup.sh [TARGET_DIR]
+# Usage: bash setup.sh [TARGET_DIR] [OPTIONS]
 # If TARGET_DIR is omitted, installs into the current directory.
+#
+# Options (all optional — omit them for the interactive flow):
+#   --tool NAME     antigravity|cursor|claude-code|copilot|zed|codex|generic|skip
+#                   Default: auto-detected from the target project.
+#   --multi-repo    also install the shared/ org-level scaffold
+#   --mcp           answer yes to every "generate MCP config?" prompt
+#   --no-mcp        answer no to them
+#   --upgrade       on an existing install, upgrade in place (never destructive)
+#   --reinstall     on an existing install, wipe graph data first [DESTRUCTIVE]
+#   -y, --yes       accept the default answer to every remaining prompt
+#   -h, --help      show this message
+#
+# Prompts read from the terminal even when stdin is a pipe, so
+# `curl ... | bash` works. With no terminal at all (CI), every unanswered
+# prompt takes its default, and the default is never destructive.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-TARGET="${1:-$(pwd)}"
+
+TARGET=""
+PRESET_TOOL=""
+PRESET_MCP=""
+PRESET_MULTIREPO=""
+PRESET_INSTALL_CHOICE=""
+ASSUME_YES=false
+
+usage() { sed -n '2,22p' "$0" | sed -e 's/^# //' -e 's/^#$//'; exit "${1:-0}"; }
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --tool)       [ $# -ge 2 ] || { echo "ERROR: --tool needs a value" >&2; exit 2; }
+                  PRESET_TOOL="$2"; shift 2 ;;
+    --multi-repo) PRESET_MULTIREPO="y"; shift ;;
+    --mcp)        PRESET_MCP="y"; shift ;;
+    --no-mcp)     PRESET_MCP="n"; shift ;;
+    --upgrade)    PRESET_INSTALL_CHOICE="1"; shift ;;
+    --reinstall)  PRESET_INSTALL_CHOICE="2"; shift ;;
+    -y|--yes)     ASSUME_YES=true; shift ;;
+    -h|--help)    usage 0 ;;
+    -*)           echo "ERROR: unknown option: $1" >&2; usage 2 ;;
+    *)            TARGET="$1"; shift ;;
+  esac
+done
+
+TARGET="${TARGET:-$(pwd)}"
+
+# Map --tool names to the menu numbers used below, so the flag and the
+# interactive menu can never drift apart.
+tool_to_choice() {
+  case "$1" in
+    antigravity) echo 1 ;; cursor)  echo 2 ;; claude-code|claude) echo 3 ;;
+    copilot)     echo 4 ;; zed)     echo 5 ;; codex|codex-cli)    echo 6 ;;
+    generic)     echo 7 ;; skip|none) echo 8 ;;
+    *) echo "" ;;
+  esac
+}
+
+# Infer the tool from what the project already has, so the common case needs no
+# flag and no prompt. Order matters: a project with both CLAUDE.md and AGENTS.md
+# is far more likely to be a Claude Code project that also ships an AGENTS.md.
+detect_tool() {
+  [ -f "${TARGET}/CLAUDE.md" ] || [ -d "${TARGET}/.claude" ] && { echo "claude-code"; return; }
+  [ -d "${TARGET}/.cursor" ] || [ -f "${TARGET}/.cursorrules" ] && { echo "cursor"; return; }
+  [ -f "${TARGET}/.github/copilot-instructions.md" ] && { echo "copilot"; return; }
+  [ -d "${TARGET}/.zed" ] && { echo "zed"; return; }
+  [ -f "${TARGET}/AGENTS.md" ] && { echo "codex"; return; }
+  echo ""
+}
+
+# Resolve --tool up front so a typo fails immediately, not after files are copied.
+PRESET_TOOL_CHOICE=""
+if [ -n "${PRESET_TOOL}" ]; then
+  PRESET_TOOL_CHOICE="$(tool_to_choice "${PRESET_TOOL}")"
+  if [ -z "${PRESET_TOOL_CHOICE}" ]; then
+    echo "ERROR: unknown --tool '${PRESET_TOOL}'" >&2
+    echo "       expected one of: antigravity cursor claude-code copilot zed codex generic skip" >&2
+    exit 2
+  fi
+fi
+
+DETECTED_TOOL="$(detect_tool)"
+DETECTED_CHOICE="$(tool_to_choice "${DETECTED_TOOL}")"
+
+# Offering to write MCP config is only useful if Node can actually run the
+# server, so the default follows what is installed rather than always saying yes.
+if command -v node >/dev/null 2>&1; then MCP_DEFAULT="Y"; else MCP_DEFAULT="N"; fi
 
 # ── colours ────────────────────────────────────────────────────────────────────
 bold=$(tput bold 2>/dev/null || echo "")
@@ -20,6 +102,47 @@ say()  { echo "${cyan}▶ $*${reset}"; }
 ok()   { echo "${green}✓ $*${reset}"; }
 warn() { echo "${yellow}! $*${reset}"; }
 ask()  { printf "%s" "${bold}$* ${reset}"; }
+
+# Read one answer into <varname>.
+#
+#   1. a preset from a command-line flag wins outright
+#   2. --yes takes the default without asking
+#   3. otherwise read stdin — which may be piped answers
+#      (`printf "n\n1\n" | bash setup.sh ...`)
+#   4. if stdin is exhausted, read the terminal via /dev/tty. This is the
+#      `curl ... | install.sh | bash` case: stdin was the script stream and is
+#      already at EOF, so without this every prompt would silently take its
+#      default even though a human is sitting right there.
+#   5. with no terminal either, take the default
+#
+# Order matters: trying /dev/tty before stdin would break piped answers, and
+# trying only stdin would make the curl one-liner unable to ask anything.
+# An empty answer always means "accept the default", as the prompts advertise.
+answer() {  # answer <varname> <default> [preset]
+  local __var="$1" __default="$2" __preset="${3:-}"
+
+  if [ -n "${__preset}" ]; then
+    printf -v "${__var}" '%s' "${__preset}"; echo "${__preset}"; return
+  fi
+
+  if [ "${ASSUME_YES}" = true ]; then
+    printf -v "${__var}" '%s' "${__default}"; echo "${__default} (--yes)"; return
+  fi
+
+  if [ -t 0 ]; then
+    read -r "${__var}" || true
+  elif read -r "${__var}"; then
+    # Piped answer consumed; echo it so the transcript shows what was chosen.
+    echo "${!__var}"
+  elif [ -r /dev/tty ]; then
+    read -r "${__var}" < /dev/tty || true
+  else
+    printf -v "${__var}" '%s' "${__default}"; echo "${__default} (no terminal)"
+    return
+  fi
+
+  if [ -z "${!__var}" ]; then printf -v "${__var}" '%s' "${__default}"; fi
+}
 
 # Replace the <!-- simplegraph-memory-start/end --> block in a file with new content,
 # or append if the markers are not present. Falls back to plain append without python3.
@@ -105,7 +228,8 @@ if [ -d "${TARGET}/core" ] && [ -f "${TARGET}/core/graph_index.md" ]; then
   echo "  3) Abort"
   echo ""
   ask "Choice [1-3]:"
-  read -r install_choice
+  # Default 1 = upgrade in place. A non-interactive run must never wipe a graph.
+  answer install_choice "1" "${PRESET_INSTALL_CHOICE}"
 
   case "${install_choice}" in
     1)
@@ -115,8 +239,18 @@ if [ -d "${TARGET}/core" ] && [ -f "${TARGET}/core/graph_index.md" ]; then
     2)
       echo ""
       warn "This will permanently delete all your graph nodes."
-      ask "Type 'yes' to confirm:"
-      read -r confirm
+      # Deliberately NOT routed through answer(): --yes must not be able to
+      # confirm a wipe. Passing --reinstall is itself the explicit confirmation.
+      if [ "${PRESET_INSTALL_CHOICE}" = "2" ]; then
+        confirm="yes"
+        warn "--reinstall given — proceeding without the typed confirmation."
+      elif [ -t 0 ]; then
+        ask "Type 'yes' to confirm:"; read -r confirm
+      elif [ -r /dev/tty ]; then
+        ask "Type 'yes' to confirm:"; read -r confirm < /dev/tty
+      else
+        confirm=""
+      fi
       if [ "${confirm}" != "yes" ]; then
         echo "Aborted."
         exit 0
@@ -157,7 +291,7 @@ fi
 if [ "${UPGRADE_MODE}" = false ]; then
   echo ""
   ask "Is this part of a multi-repo / team project? [y/N]"
-  read -r multirepo
+  answer multirepo "N" "${PRESET_MULTIREPO}"
   if [[ "${multirepo}" =~ ^[Yy]$ ]]; then
     say "Copying shared/ scaffold..."
     cp -r "${SCRIPT_DIR}/shared" "${TARGET}/shared"
@@ -183,8 +317,13 @@ echo "  5) Zed"
 echo "  6) Codex CLI (OpenAI)"
 echo "  7) Generic (ChatGPT, Gemini, Windsurf, Aider, etc.)"
 echo "  8) Skip for now"
+if [ -n "${DETECTED_TOOL}" ] && [ -z "${PRESET_TOOL_CHOICE}" ]; then
+  echo ""
+  echo "  Detected ${bold}${DETECTED_TOOL}${reset} in this project — press enter to accept."
+fi
 ask "Choice [1-8]:"
-read -r adapter_choice
+answer adapter_choice "${DETECTED_CHOICE:-8}" "${PRESET_TOOL_CHOICE}"
+adapter_choice="${adapter_choice:-${DETECTED_CHOICE:-8}}"
 
 case "${adapter_choice}" in
   1)
@@ -239,7 +378,7 @@ open('${SKILL_DEST}', 'w').write(result)
       ok "Claude Code adapter updated → CLAUDE.md"
     elif [ -f "${CLAUDE_MD}" ]; then
       ask "CLAUDE.md found — append memory section to it? [Y/n]"
-      read -r append_choice
+      answer append_choice "Y"
       if [[ ! "${append_choice}" =~ ^[Nn]$ ]]; then
         echo "" >> "${CLAUDE_MD}"
         cat "${SCRIPT_DIR}/adapters/claude-code/CLAUDE_MEMORY.md" >> "${CLAUDE_MD}"
@@ -256,7 +395,7 @@ open('${SKILL_DEST}', 'w').write(result)
     # Note: mcpServers is NOT valid in .claude/settings.json — Claude Code reads .mcp.json
     echo ""
     ask "Generate .mcp.json with MCP server config? [Y/n]"
-    read -r mcp_choice
+    answer mcp_choice "${MCP_DEFAULT}" "${PRESET_MCP}"
     if [[ ! "${mcp_choice}" =~ ^[Nn]$ ]]; then
       MCP_JSON="${TARGET}/.mcp.json"
       CLAUDE_DIR="${TARGET}/.claude"
@@ -333,7 +472,7 @@ EOF
     # Offer to generate .zed/settings.json with context server config
     echo ""
     ask "Generate .zed/settings.json with context server (MCP) config? [Y/n]"
-    read -r zed_mcp_choice
+    answer zed_mcp_choice "${MCP_DEFAULT}" "${PRESET_MCP}"
     if [[ ! "${zed_mcp_choice}" =~ ^[Nn]$ ]]; then
       ZED_DIR="${TARGET}/.zed"
       ZED_SETTINGS="${ZED_DIR}/settings.json"
@@ -385,7 +524,7 @@ EOF
       ok "Codex adapter updated → AGENTS.md"
     elif [ -f "${AGENTS_MD}" ]; then
       ask "AGENTS.md found — append memory section to it? [Y/n]"
-      read -r append_choice
+      answer append_choice "Y"
       if [[ ! "${append_choice}" =~ ^[Nn]$ ]]; then
         echo "" >> "${AGENTS_MD}"
         cat "${SCRIPT_DIR}/adapters/codex/AGENTS_MEMORY.md" >> "${AGENTS_MD}"
@@ -402,7 +541,7 @@ EOF
     # Offer to generate .codex/config.toml with MCP server config
     echo ""
     ask "Generate .codex/config.toml with MCP server config? [Y/n]"
-    read -r codex_mcp_choice
+    answer codex_mcp_choice "${MCP_DEFAULT}" "${PRESET_MCP}"
     if [[ ! "${codex_mcp_choice}" =~ ^[Nn]$ ]]; then
       CODEX_DIR="${TARGET}/.codex"
       CODEX_CONFIG="${CODEX_DIR}/config.toml"

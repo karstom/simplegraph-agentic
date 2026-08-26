@@ -150,6 +150,58 @@ for script in consistency_check.sh stale_check.sh auto_map.sh token_benchmark.sh
   fi
 done
 
+# ── Non-interactive install (the one-liner path) ──────────────────────────────
+# setup.sh must be drivable three ways, and all three have broken before:
+#   • piped answers        printf "n\n1\n" | bash setup.sh DIR      (tested above)
+#   • explicit flags       bash setup.sh DIR --tool X --yes
+#   • no terminal at all   setsid ... < /dev/null                  (CI)
+# The failure mode is a hang, so every case here runs under `timeout`.
+section "Non-interactive install (flags)"
+TMPDIR_NI=$(mktemp -d /tmp/sg_test_ni.XXXXXX)
+trap "rm -rf ${TMPDIR_AG} ${TMPDIR_NI}" EXIT
+
+if timeout 120 bash "${REPO_DIR}/setup.sh" "${TMPDIR_NI}" --tool claude-code --yes \
+     > /tmp/sg_setup_ni.txt 2>&1; then
+  pass "setup.sh --tool claude-code --yes completes without input"
+else
+  fail "setup.sh with flags failed or hung (see /tmp/sg_setup_ni.txt)"
+fi
+[ -f "${TMPDIR_NI}/CLAUDE.md" ] && pass "flags installed the named adapter" \
+                               || fail "flags did not install CLAUDE.md"
+[ -d "${TMPDIR_NI}/core" ]      && pass "flags installed the graph" \
+                               || fail "flags did not install core/"
+
+section "Non-interactive install (no terminal)"
+TMPDIR_CI=$(mktemp -d /tmp/sg_test_ci.XXXXXX)
+trap "rm -rf ${TMPDIR_AG} ${TMPDIR_NI} ${TMPDIR_CI}" EXIT
+
+# setsid detaches from the controlling terminal, so /dev/tty is unavailable —
+# every prompt must fall through to its default rather than blocking forever.
+if timeout 120 setsid bash "${REPO_DIR}/setup.sh" "${TMPDIR_CI}" --tool skip \
+     < /dev/null > /tmp/sg_setup_ci.txt 2>&1; then
+  pass "setup.sh completes with no terminal available"
+else
+  fail "setup.sh hung or failed without a terminal (see /tmp/sg_setup_ci.txt)"
+fi
+[ -d "${TMPDIR_CI}/core" ] && pass "graph installed without a terminal" \
+                           || fail "core/ missing after headless install"
+
+section "Installer entrypoint"
+if [ -f "${REPO_DIR}/install.sh" ]; then
+  pass "install.sh present"
+  bash -n "${REPO_DIR}/install.sh" 2>/dev/null && pass "install.sh parses" \
+                                               || fail "install.sh has a syntax error"
+  timeout 30 bash "${REPO_DIR}/install.sh" --help >/dev/null 2>&1 \
+    && pass "install.sh --help exits cleanly" || fail "install.sh --help failed"
+  if timeout 30 bash "${REPO_DIR}/install.sh" --bogus >/dev/null 2>&1; then
+    fail "install.sh accepted an unknown option"
+  else
+    pass "install.sh rejects unknown options"
+  fi
+else
+  fail "install.sh not found"
+fi
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""
 echo "═══════════════════════════════════════════════════"

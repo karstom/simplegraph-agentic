@@ -1,5 +1,55 @@
 # Changelog
 
+## [Unreleased]
+
+### One-line install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/karstom/simplegraph-agentic/main/install.sh | bash
+```
+
+- **`install.sh`.** Fetches simplegraph into `~/.simplegraph`, builds and wires
+  the MCP server when Node 18+ is present, and hands off to `setup.sh`. A
+  persistent home is required rather than incidental: `setup.sh` writes an
+  `.mcp.json` pointing at `<home>/mcp/dist/index.js`, so a temp checkout would
+  leave a dangling server path. Re-running the command upgrades in place.
+  Degrades cleanly without Node — the markdown graph installs and MCP is
+  skipped. `SIMPLEGRAPH_REPO_URL` points it at a fork.
+- **`setup.sh` is scriptable.** `--tool`, `--dir`, `--mcp`/`--no-mcp`,
+  `--multi-repo`, `--upgrade`/`--reinstall`, `--yes`. The AI tool is
+  auto-detected from the project (`CLAUDE.md`, `.cursor/`, copilot
+  instructions, `.zed/`, `AGENTS.md`) so the common case needs no flag.
+  `--yes` can never trigger the destructive reinstall; that still requires an
+  explicit flag or a typed confirmation.
+- **Prompts survive a pipe.** Answers are read from stdin when stdin carries
+  them, from `/dev/tty` when stdin is an exhausted script stream (the
+  `curl … | bash` case), and default safely when there is no terminal at all.
+  Getting this order wrong breaks one of the three in a way that hangs, so all
+  three are covered by tests.
+
+### Cross-platform
+
+Verified on Linux; written against the constraints of macOS and WSL.
+
+- **bash 3.2 compatible** — no `mapfile`, associative arrays, or `${var,,}`,
+  because that is what macOS ships as `/bin/bash`.
+- **`auto_map.sh` now verifies it found Universal Ctags.** macOS ships a
+  BSD/Xcode `ctags` that satisfies `command -v` but cannot emit JSON tags; it
+  failed into `|| true` and the run ended with "No symbols found", which reads
+  as "your project has no code" rather than "this is the wrong ctags".
+- **Root `.gitattributes` pins `eol=lf`.** A clone made by Git for Windows with
+  `core.autocrlf=true`, opened under WSL, fails on every script with a bare
+  `\r: command not found` — the shebang itself ends in `\r`.
+
+### Documentation
+
+- **README rewritten as a landing page** — 409 lines to 149. It now opens with
+  the tool catching a real six-recurrence regression, then the install command.
+  Previously a reader met a token-efficiency table at line 17 and no install
+  command until line 72.
+- **Reference material moved to `docs/`** — seeding, graph format, maintenance,
+  code graphs, and multi-agent, all linked from the README.
+
 ## [0.5.0] — 2026-08-26
 
 ### Blast-radius anchoring — compose with a structural code graph

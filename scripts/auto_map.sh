@@ -81,10 +81,24 @@ fi
 OUTPUT="${OUTPUT_DIR}/auto_map.md"
 
 # ── verify deps ───────────────────────────────────────────────────────────────
-if ! command -v ctags &>/dev/null; then
-  echo "ERROR: ctags not found. Install Universal Ctags first."
-  echo "  Debian/Ubuntu: sudo apt install universal-ctags"
-  echo "  macOS:         brew install universal-ctags"
+if ! command -v ctags >/dev/null 2>&1; then
+  echo "ERROR: ctags not found. Install Universal Ctags first." >&2
+  echo "  Debian/Ubuntu: sudo apt install universal-ctags" >&2
+  echo "  macOS:         brew install universal-ctags" >&2
+  echo "  Fedora/RHEL:   sudo dnf install ctags" >&2
+  exit 1
+fi
+
+# macOS ships a BSD/Xcode `ctags` that answers `command -v` but does not support
+# --output-format=json. Left unchecked it exits non-zero into `|| true`, and the
+# run ends with "No symbols found" — which reads as "your project has no code"
+# rather than "this is the wrong ctags". Name the actual problem instead.
+if ! ctags --version 2>/dev/null | grep -qi "universal ctags"; then
+  echo "ERROR: found '$(command -v ctags)', but it is not Universal Ctags." >&2
+  echo "       macOS ships a BSD/Xcode ctags that cannot emit JSON tags." >&2
+  echo "  macOS: brew install universal-ctags" >&2
+  echo "         (then ensure its bin directory precedes /usr/bin in PATH)" >&2
+  echo "  Check: ctags --version   # should say 'Universal Ctags'" >&2
   exit 1
 fi
 

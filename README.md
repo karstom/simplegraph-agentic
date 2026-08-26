@@ -1,408 +1,148 @@
 # simplegraph-agentic
 
-A lightweight **persistent memory graph** for AI coding assistants.
+**Your AI coding agent forgets everything between sessions. This gives it a memory that doesn't.**
 
-Your agent accumulates structured knowledge about your codebase — recurring bugs, deliberate decisions, dangerous code areas — and carries it across sessions without bloating every context window. Works with Claude Code, Cursor, GitHub Copilot, Antigravity, Zed, Codex CLI, and any tool that accepts custom instructions.
+Not a vector database. Not a code index. A small, typed graph of the things that only get learned the hard way — the bug that came back six times, the rule nobody wrote down, the decision that looks wrong until you know why. Plain markdown, in your repo, in git.
 
----
-
-## The Problem
-
-Every AI coding session starts cold. The agent re-introduces the bug you fixed three times, undoes the architectural decision that was intentional, and generates the pattern your team banned. You re-explain the same context over and over — or worse, you don't, and it silently breaks things.
+Works with Claude Code, Cursor, Copilot, Zed, Codex CLI, and anything that takes custom instructions.
 
 ---
 
-## How It Works
+## What this looks like in practice
 
-### Tiered loading — 53× fewer tokens at session start
+You ask your agent to change how sessions are stored. Before it edits anything, it checks the graph:
 
-Measured on a production codebase: 36 graph files, 251 nodes, accumulated over
-718 commits of real use.
+```
+⚠ Found 1 node(s) (1 HIGH priority):
 
-| Approach | Session start | Per task |
+## Directly affected (1)
+
+**Matched on:** edited file `src/auth/session.ts`
+### REG_SESSION_FLAG_RESET
+**Type:** Regression | **Priority:** HIGH
+**Label:** "Secured" badge reappears for protected users after every deploy
+**REGRESSED_N_TIMES:** 6
+**RootCause:** "Secured" was inferred from three independently-wipeable
+sentinels instead of read from one source of truth. Fixes 1–5 each added
+another place that re-stamps the flag; none removed the ambiguity.
+**Files:** `src/auth/session.ts`, `src/auth/keystore.ts`
+```
+
+That node is real — six recurrences on a production codebase, anonymized here. Without it, the agent confidently writes fix number seven, in a seventh location. With it, the agent knows the shape of the trap before it steps in.
+
+**That is the whole product.** Everything below is in service of it.
+
+---
+
+## Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/karstom/simplegraph-agentic/main/install.sh | bash
+```
+
+Run it from inside your project. It detects your AI tool, installs the graph, and — if Node 18+ is available — builds and wires the MCP server so your agent can call the graph directly.
+
+Prefer to read before you pipe:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/karstom/simplegraph-agentic/main/install.sh -o install.sh
+less install.sh && bash install.sh
+```
+
+Options: `--tool cursor`, `--dir path/to/project`, `--no-mcp`, `--yes`. Through a pipe, pass them with `bash -s --`. Re-run the same command to upgrade. Linux, WSL, and macOS; bash 3.2+.
+
+## Then give it something to remember
+
+A new graph doesn't have to start empty — most of what it wants is already in your git history:
+
+```bash
+sg seed --dry-run     # mine reverts, repeat-fixes, ADRs, and TODOs. Write nothing.
+sg seed               # review the draft, then commit it
+```
+
+Deterministic, offline, no API key, full provenance on every node. On a 718-commit repo it finds around 60 nodes to start from. See [seeding](docs/seeding.md).
+
+---
+
+## Why a graph and not a bigger CLAUDE.md
+
+A flat memory file gets read in full on every single request. A graph gets *routed* — the agent reads a ~50-line index, then loads only the two or three files that matter for the task in front of it.
+
+Measured on a production graph of 36 files and 251 nodes, built over 718 commits of real use:
+
+| | Session start | Per task |
 |---|---|---|
-| **simplegraph (tiered)** | **~974 tokens** | **~6,343 tokens** |
-| Monolith (flat file) | ~52,300 tokens | ~52,300 tokens |
-| No memory | 0 up front, ~500–2,000 per re-explanation | compounds |
+| **simplegraph** (tiered) | **~974 tokens** | **~6,343 tokens** |
+| One flat file | ~52,300 tokens | ~52,300 tokens |
 
-**53× reduction** at session start. **8× reduction** for a typical task. The
-savings compound across every request in a session — the agent reads ~974 tokens
-once, then loads only the 2–3 files relevant to the current task.
+**53× less** at session start, **8× less** for a typical task.
 
-Note what happens as a graph grows: between measurements this one went from 31
-files to 36, and the flat-file cost rose from ~30,700 to ~52,300 tokens while the
-session-start cost stayed under 1,000. That is the point of tiering — the index
-is bounded by the number of *nodes* you route to, not by how much you have
-recorded about them. A monolith gets worse every time you learn something.
+The gap widens as you learn more. Between two measurements this graph grew from 31 files to 36, and the flat-file cost went from ~30,700 to ~52,300 tokens while session start stayed under 1,000. A monolith gets more expensive every time you record something; a routed graph doesn't.
 
-Token counts are estimated at 1.3 tokens/word, not measured with a real
-tokenizer, so treat them as ratios rather than exact figures. Run
-`bash scripts/token_benchmark.sh` on your own graph to measure yours.
+*(Estimated at 1.3 tokens/word — read them as ratios. `bash scripts/token_benchmark.sh` measures your own.)*
 
-### Typed nodes and edges — follow risk chains
+---
 
-Nodes have types (**Component**, **Invariant**, **Regression**, **Decision**, **Watchlist**) and typed edges. An agent can follow:
+## What makes it more than notes
+
+**Typed nodes and edges.** Nodes are Components, Invariants, Regressions, Decisions, or Watchlists, connected by typed edges. The agent can follow a chain:
 
 ```
 AUTH_SERVICE --VIOLATED_BY--> REG_TOKEN_LEAK (×3) --FIXED_BY--> DEC_ROTATE_ON_REFRESH
 ```
 
-That chain tells the agent exactly what to be careful about and why — in 3 hops.
+Three hops tell it what is fragile here and why.
 
-### Priority — load critical context first
+**A counter that means something.** Every recurrence increments `REGRESSED_N_TIMES`. At 2, the MCP server *refuses* to record another recurrence until the agent answers three questions: what is the source of truth, which invariant is being violated, and why every previous fix was symptomatic. A bug that keeps coming back is a design problem, and the tool makes the agent say so out loud before it patches again.
 
-| Signal | Priority |
+**Anchors that survive refactors.** Nodes attach to files, to symbols (`AuthService.refreshToken`), and to owned directories. A symbol anchor still fires after the file is renamed — and fires when a *caller* is edited, which is usually where the bug actually returns.
+
+**It composes with your code index.** simplegraph doesn't parse your source, and won't try. If you run a structural code graph — codebase-memory-mcp, code-review-graph, Graphify, or an LSP — hand its blast radius to `simplegraph_check_files` and get back which of those files have a history. They know what your code *is*; this knows what it has *done to you*. See [code graphs](docs/code-graphs.md).
+
+**Zero infrastructure.** No database, no server, no embeddings, no API key. Markdown and git. It reviews in the PR diff like everything else, because a memory node is agent-written text that other agents will later trust.
+
+---
+
+## Editor support
+
+| Tool | Installed to |
 |---|---|
-| `REGRESSED_N_TIMES >= 2` | **HIGH** |
-| `LastUpdated` within 14 days | **MEDIUM** |
-| Stable, no flags | **LOW** |
+| Claude Code | `CLAUDE.md` + `.mcp.json` (MCP server) |
+| Cursor | `.cursor/rules/memory.mdc` |
+| GitHub Copilot | `.github/copilot-instructions.md` |
+| Zed | `.zed/rules/memory.md` + context server |
+| Codex CLI | `AGENTS.md` + `.codex/config.toml` |
+| Anything else | Generic adapter for custom instructions |
 
-### Compared to alternatives
+The installer picks the right one automatically. With the MCP server, the agent gets eleven tools — the important ones being `simplegraph_check_files` before an edit, `simplegraph_anti_patterns` before generating code, and `simplegraph_add_node` after a fix. See [`mcp/README.md`](mcp/README.md).
 
-| Approach | Limitation |
+---
+
+## Documentation
+
+| | |
 |---|---|
-| **CLAUDE.md / .cursorrules** | Flat files load everything every time. On the 36-file graph benchmarked above, that is ~46,000 tokens of context spent per request on nodes the task never touches. |
-| **Aider repo-map** | Answers "where is X?" but not "what went wrong?" or "why was this decided?" |
-| **Vector DB (Mem0, etc.)** | Requires infrastructure; retrieval is probabilistic — may miss the one invariant that blocks a regression. |
-| **Structural code graphs** (codebase-memory-mcp, code-review-graph, Graphify) | Different problem, not a competitor — see [Works on top of your code graph](#works-on-top-of-your-code-graph). They parse what the code *is*; they can't know what it has *done to you*. |
-| **Fine-tuned models** | Expensive, opaque, stale the moment code changes. |
+| [Seeding](docs/seeding.md) | Bootstrap a graph from git history |
+| [Graph format](docs/graph-format.md) | Node types, edge types, anchors, layout |
+| [Maintenance](docs/maintenance.md) | The CI gate, staleness checks, scaling |
+| [Code graphs](docs/code-graphs.md) | Composing with a structural index |
+| [Multi-agent](docs/multi-agent.md) | Parallel agents, branches, shared org graphs |
+| [MCP server](mcp/README.md) | Tools, configuration, environment variables |
+| [Updating a graph](core/HOW_TO_UPDATE.md) | When to add a node, and the root-cause gate |
 
 ---
 
-## Quickstart
-
-```bash
-git clone https://github.com/karstom/simplegraph-agentic.git
-bash simplegraph-agentic/setup.sh /path/to/your/project
-```
-
-The installer copies `core/` into your project, installs the right adapter for your AI tool, and prints next steps including the seed prompt.
-
-**Already installed?** Re-run `setup.sh` on an existing project — it detects the existing graph and prompts you to upgrade in place (scripts and adapters refreshed, graph data untouched) or do a clean reinstall.
-
-### Manual install
-
-1. Copy `core/` into your project root.
-2. Pick an adapter from `adapters/` — see the [Adapter Matrix](#adapter-matrix) below.
-3. Bootstrap the graph: run `sg seed` (below) or `scripts/seed_prompt.md` in your AI tool.
-4. Commit `core/`.
-
----
-
-## `sg seed` — bootstrap the graph from your repo's history
-
-A new graph doesn't have to start empty. Everything it wants to store is already
-latent in your repository: reverted and repeatedly-fixed files are regressions,
-merge bodies and ADRs are decisions, emphatic comments and rule-shaped test names
-are invariants, TODO/FIXME markers and high-churn files are watchlists, and your
-directory structure is the component map. `sg seed` mines all of it —
-**deterministically, offline, no API key** — into a draft you review before
-anything is written.
-
-```bash
-cd mcp && npm install && npm run build && npm link   # installs the `sg` bin
-cd /path/to/your/project
-sg seed --dry-run     # mine and summarize, write nothing
-sg seed               # mine, review the summary, confirm the merge
-```
-
-```
-sg seed [PATH]
-  --dry-run              mine and summarize, write nothing
-  --since <ref|date>     history window (default: last 500 commits)
-  --min-confidence <n>   drop draft nodes below threshold (default 0.5)
-  --types <list>         restrict to given node types
-  --max-per-type <n>     cap per type (default 15)
-  --output <path>        write the draft bundle here
-  --yes                  skip the interactive confirm
-```
-
-Every seeded node carries **provenance** (the commits and file locations it was
-mined from) plus a confidence score, so you can audit — and delete — anything
-that reads as noise. Re-running is safe: output is idempotent at the same
-commit, re-runs after new commits add only what's new, and a seeded node you've
-hand-edited is never overwritten (the conflict is reported instead). See the
-"Seeded nodes" section of `core/HOW_TO_UPDATE.md`.
-
-`scripts/seed_prompt.md` remains the LLM-assisted alternative: richer summaries,
-but non-deterministic and model-dependent. `sg seed` is the reproducible baseline.
-
----
-
-## MCP Server (recommended for Claude Code)
-
-The `mcp/` directory exposes the graph as callable tools via the Model Context Protocol. This is more reliable than context injection alone — the agent actively calls tools rather than hoping it read a file at session start.
-
-```
-simplegraph_index              — Routing table (call at session start)
-simplegraph_check_files        — Check code for known issues BEFORE editing (accepts a blast radius)
-simplegraph_anti_patterns      — Anti-patterns list BEFORE generating code
-simplegraph_nodes              — All nodes in a category
-simplegraph_search             — Keyword search across all nodes
-simplegraph_get_node           — Fetch a single node by exact ID
-simplegraph_add_node           — Add a node after a bug fix or decision
-simplegraph_update_index       — Add a new node to graph_index.md
-simplegraph_update_node        — Update a field; increment REGRESSED_N_TIMES
-simplegraph_archive_regression — Move a resolved regression to archive
-simplegraph_scratchpad         — Session notes not yet ready to commit as nodes
-```
-
-See [`mcp/README.md`](mcp/README.md) for installation (Claude Desktop, Cursor, VS Code, `.claude/settings.json`). The `setup.sh` Claude Code path can generate `.claude/settings.json` automatically.
-
-> **Best practice:** use both — the adapter gives a session-start summary via context injection; the MCP server handles mid-task safety checks and structured updates.
-
----
-
-## Works on top of your code graph
-
-simplegraph stores **judgment**: what regressed, what's forbidden, why the code is the
-way it is. It does not parse your source, and it will not try to.
-
-That makes it complementary to the structural code-graph tools —
-[codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp),
-code-review-graph, [Graphify](https://github.com/graphify) — rather than a competitor.
-They index functions, calls, imports and types with tree-sitter and answer *"what does
-this edit touch?"* in one tool call. Nothing in an AST can tell you that
-`REG_TOKEN_LEAK` has happened three times.
-
-**They tell the agent what the code is. simplegraph tells it what the code has done to you.**
-
-The seam is `simplegraph_check_files`. Ask your structural tool for the blast radius
-first, then hand it over:
-
-```jsonc
-simplegraph_check_files({
-  "files":           ["src/auth/parse.ts"],       // what you're editing
-  "symbols":         ["parseToken"],
-  "related_files":   ["src/auth/service.ts"],     // its callers, from the code graph
-  "related_symbols": ["AuthService.refreshToken"]
-})
-```
-
-Results come back in two groups — **Directly affected**, then **In the blast radius** —
-each with a `Matched on:` line explaining why it fired. A structural graph knows
-`service.ts` is affected by your edit. Only simplegraph knows it broke twice last
-quarter and why the last fix was symptomatic.
-
-Any expansion source works, including none: a code-graph MCP server, an LSP,
-`grep -r <symbol>`, or nothing at all — the arguments are optional and an
-unexpanded call behaves exactly as it did before.
-
-### Anchors
-
-Nodes participate through three optional fields, all matched by `check_files`:
-
-| Field | Matching | Use for |
-|---|---|---|
-| `**Files:**` | Path suffix | The specific files a node is about |
-| `**Symbols:**` | Symbol name, qualified or bare | The function or class it's really about |
-| `**Paths:**` | Directory containment | Component ownership of an area |
-
-`**Symbols:**` is the one that pays for itself. A path-only anchor breaks silently
-the moment a file is renamed — the node still reads as live but no longer guards
-anything. A symbol survives the move, and fires when a *caller* is edited, which is
-usually where the bug actually gets reintroduced.
-
-`**Paths:**` belongs on Component nodes: `COMP_AUTH` owning `src/auth` fires for any
-file beneath it, including files that didn't exist when the node was written. Keeping
-it to Components is deliberate — directory ownership on a Regression would fire on
-every unrelated edit in the area and train the agent to ignore the tool.
-
-`scripts/stale_check.sh` checks both: `Paths` that are no longer directories, and
-`Symbols` absent from `auto_map.md`.
-
-The `check_files` response is budgeted so a widened radius can't flood the context:
-full records for the top-ranked direct hits, one-line digests for the rest, capped
-inline edge lists. Nothing on the direct path is hidden — past the limit it is
-summarized. Tune it with `SIMPLEGRAPH_CHECK_DETAIL_LIMIT`, `SIMPLEGRAPH_CHECK_DIGEST_LIMIT`,
-`SIMPLEGRAPH_CHECK_DIGEST_CHARS`, and `SIMPLEGRAPH_EDGE_PREVIEW` (see
-[`mcp/README.md`](mcp/README.md)).
-
-Existing graphs need no migration. All three fields are optional, nodes without them
-behave exactly as before, and `simplegraph_update_node` inserts `Symbols` / `Paths`
-into nodes that predate the fields rather than refusing the write.
-
----
-
-## Adapter Matrix
-
-| AI Tool | Adapter | Install path |
-|---|---|---|
-| **Claude Code** | `adapters/claude-code/CLAUDE_MEMORY.md` | Appended to `CLAUDE.md` (setup.sh handles this) |
-| **Cursor** | `adapters/cursor/memory.mdc` | `.cursor/rules/memory.mdc` |
-| **GitHub Copilot** | `adapters/copilot/copilot-instructions-memory.md` | `.github/copilot-instructions.md` |
-| **Zed** | `adapters/zed/memory.md` | `.zed/rules/memory.md` |
-| **Codex CLI** | `adapters/codex/AGENTS_MEMORY.md` | Appended to `AGENTS.md` (setup.sh handles this) |
-| **Generic** | `adapters/generic/AGENT_MEMORY.md` | Paste into custom instructions |
-| ~~**Antigravity**~~ | ~~`adapters/antigravity/SKILL.md`~~ | ~~**Deprecated** — broken in Antigravity 2.x~~ |
-
-The generic adapter works with ChatGPT Projects, Gemini Gems, Windsurf, Aider, Cline, or any tool that accepts a persistent system prompt.
-
-> **Zed note:** The rules adapter covers Zed's native AI assistant panel. If you're using Claude Code in Zed's terminal or the `claude-acp` external agent, use the Claude Code adapter instead — those paths already read `CLAUDE.md`. See [`mcp/README.md`](mcp/README.md) for the Zed context server (MCP) configuration.
-
----
-
-## Graph Structure
-
-```
-core/
-├── graph_index.md        # Mandatory session-start read (~50 lines)
-├── anti_patterns.md      # What the AI should NEVER generate
-├── invariants.md         # Hard rules ("never call X without Y")
-├── regressions.md        # Bugs + REGRESSED_N_TIMES counters
-├── decisions.md          # Architectural choices with rationale
-├── watchlists.md         # Dangerous code areas + open issues
-├── HOW_TO_UPDATE.md      # When and how to update the graph
-├── components/           # One file per major service/module
-├── archive/
-│   └── resolved_regressions.md
-├── auto_map.md           # (generated, gitignored) structural repo map
-└── .scratchpad.md        # (gitignored) session-local AI notes
-```
-
-For multi-repo teams, a `shared/` directory adds cross-repo invariants, decisions, and an org-level index. See `shared/graph_index.md`.
-
-### Edge types
-
-| Edge | Meaning |
-|---|---|
-| `DEPENDS_ON` | This node requires the target to function correctly |
-| `CAUSES` | Violating this node causes the target problem |
-| `MITIGATES` | This node reduces the risk of the target |
-| `FIXED_BY` | This regression was resolved by the target |
-| `VIOLATED_BY` | This invariant was broken by the target regression |
-| `CONTAINS` | This Watchlist or Component contains the target |
-
----
-
-## Keeping the Graph Fresh
-
-The graph only stays useful if it's updated when code changes.
-
-| Task | Mechanism |
-|---|---|
-| **Edge consistency & duplicate IDs** (`consistency_check.sh`) | CI required status check — enforced on every PR |
-| **Structural map** (`auto_map.sh`) | Git pre-commit hook — automatic, local |
-| **Node updates** (regressions, decisions, etc.) | Anchor to a merge checklist the agent already follows |
-
-**CI check** — add as a required branch protection rule so broken edges can never merge:
-
-```yaml
-# .github/workflows/graph-check.yml
-on: [pull_request]
-jobs:
-  graph-check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: bash core/scripts/consistency_check.sh
-```
-
-Node IDs are matched as `[A-Z][A-Z0-9_]*`, so the hashed IDs `sg seed` mints
-(`REG_TOKEN_LEAK_1F3A`) are compared in full rather than truncated at the first
-digit. The check uses only POSIX `grep -E` / `sed` / `awk` — no `grep -P`, which
-BSD/macOS grep does not support. A self-test runs first and exits **2** if ID
-extraction is not working on the host, so a broken toolchain fails the build
-loudly instead of reporting "all valid" after comparing two empty sets. Exit
-codes: `0` clean, `1` graph problem, `2` check could not run.
-
-Run `bash scripts/test_consistency_check.sh` to verify the gate itself.
-
-**Node updates** grow naturally: fix a bug → add a Regression node in the same commit. Notice a bug recurs → call `simplegraph_update_node` to increment `REGRESSED_N_TIMES`. The graph improves through real usage — low quality at seed time is fine.
-
----
-
-## Multi-agent development
-
-When several agents write the graph at once — parallel Claude Code sessions, worktree-based subagents, or a whole team — two failure modes appear that a single-agent setup never hits: concurrent writers racing on the same checkout, and parallel branches diverging before they merge. The MCP server and tooling handle both:
-
-| Hazard | Protection |
-|---|---|
-| **Torn / lost writes** on a shared checkout | Every write is atomic (temp-file + rename); read-modify-write tool calls hold a per-graph lock, so a `REGRESSED_N_TIMES` increment can't be silently dropped |
-| **Conflicts on every parallel append** | `core/.gitattributes` marks the node list files `merge=union`, so two branches that each added a node merge cleanly instead of colliding |
-| **`graph_index.md` merge conflicts** across branches | The Quick Index is *derived* — regenerate it with `sg reindex` instead of hand-merging; the output is sorted and order-independent, so either side resolves identically |
-| **Duplicate node IDs** from two branches | `consistency_check.sh` fails the build when one ID is defined twice (across `core/` and `shared/`) |
-| **"Which agent wrote this?"** after a merge | Optional `**Author:**` / `**Session:**` fields (set `SIMPLEGRAPH_AUTHOR` / `SIMPLEGRAPH_SESSION`, or pass `author` / `session` to `add_node`) record provenance for arbitration |
-| **A wrong node becoming org-wide law** | The MCP server is read-only against `shared/`, so promotion is a deliberate, human-reviewed act; `consistency_check.sh` validates the shared graph and warns on untraceable org-wide nodes |
-
-Propagation is not instant: an agent's node reaches others only when its branch merges, so commit graph updates in the same commit as the code and land them promptly. Because a graph node is agent-authored text that other agents later load as guidance, keep it in the PR diff where a human reviews it — the same trust boundary a shared `shared/` graph relies on. See [`mcp/README.md`](mcp/README.md#multi-agent-development) for the full mechanism.
-
-### Seeding, and closing the decision gap
-
-`sg seed` mines the repository deterministically: offline, no API key, full
-provenance on every node, and byte-identical output when re-run at the same
-commit. That is the whole CLI — it never calls a model.
-
-What it cannot do is judge. Its Decision extractor only fires when a commit
-subject starts with an explicit verb (`refactor`, `migrate`, `adopt`, …), so
-seeding this repository found 2 Decisions across 43 commits and missed several
-recorded in ordinary commit bodies.
-
-That judgment belongs to the agent you already have connected. The MCP server
-exposes **`simplegraph_seed_candidates`**, which returns commits whose message
-plausibly contains a rationale, along with the message body and a pre-computed
-node ID. The agent reads them, decides which actually state *why* rather than
-just *what*, and writes the good ones with the ordinary `simplegraph_add_node`.
-
-This means there is no second model, no API key, no separate billing path, and
-no new write path — the agent uses whichever model you are already running, and
-its writes go through the same atomic, locked, no-clobber tools as everything
-else. Two properties make it safe to call repeatedly:
-
-- **Identity comes from git**, not from the agent: a node's ID is derived from
-  the commit subject and SHA, so how the agent words it cannot change it.
-- **Candidates already written are never returned**, so calling the tool again
-  converges on the remaining work instead of duplicating.
-
-The tool's description instructs the agent to skip anything that describes only
-what changed. Where the "why" was never written down it cannot be recovered, and
-a missing node beats an invented rationale — these are loaded as guidance by
-other agents.
-
-Improving the wording of existing nodes needs no special machinery either: read
-them with `simplegraph_nodes` and rewrite with `simplegraph_update_node`, which
-can now set `Label` as well as `Summary` and `Tags`.
-
----
-
-## Scaling
-
-| Project size | Strategy |
-|---|---|
-| **<10 components** | Single `graph_index.md` with flat routing table |
-| **10–30 components** | Same; split multi-node files if merge conflicts increase |
-| **30+ components** | Hierarchical routing: domain-level indexes |
-| **Multi-repo** | Per-repo `core/` + shared org-level graph |
-
----
-
-## Design Principles
-
-1. **Zero infrastructure.** No databases, no servers. Plain markdown + git.
-2. **Stay small.** 5 high-signal nodes beat 50 shallow ones.
-3. **AI writes the graph alongside the code.** Graph updates go in the same commit as the fix.
-4. **Tiered loading.** The agent reads ~50 lines at session start, not 5,000.
+## Design principles
+
+1. **Zero infrastructure.** Markdown and git. Nothing to run, nothing to host.
+2. **Stay small.** Five high-signal nodes beat fifty shallow ones.
+3. **The agent writes the graph alongside the code.** Graph updates ship in the same commit as the fix.
+4. **Tiered loading.** Read fifty lines at session start, not five thousand.
 5. **Git-native.** Committed, versioned, branched, and reviewed like code.
-
----
-
-## Scripts
-
-| Script | Purpose |
-|---|---|
-| `setup.sh` | Interactive installer and upgrader |
-| `scripts/seed_prompt.md` | One-shot prompt to bootstrap the graph from cold |
-| `scripts/consistency_check.sh` | Verify no broken edge references and no duplicate node IDs |
-| `scripts/test_consistency_check.sh` | Tests for the above (run before trusting it as a CI gate) |
-| `scripts/stale_check.sh` | Flag nodes with old dates or dead file references |
-| `scripts/auto_map.sh` | Generate structural repo map (requires Universal Ctags). Skips dependency, build, and duplicate-checkout dirs — including agent worktrees (`.claude/`, `worktrees/`), which otherwise double the map and keep deleted symbols visible. Adjust with `--exclude DIR` / `--include DIR`, or replace the list via `SIMPLEGRAPH_EXCLUDE_DIRS`. |
-| `scripts/token_benchmark.sh` | Measure token efficiency vs a flat file |
-
----
 
 ## Contributing
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md).
+Issues and PRs welcome — see [CONTRIBUTING.md](./CONTRIBUTING.md). If you use this, an issue describing what your graph looks like after a month is genuinely useful.
 
 ## License
 
