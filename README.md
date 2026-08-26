@@ -14,17 +14,30 @@ Every AI coding session starts cold. The agent re-introduces the bug you fixed t
 
 ## How It Works
 
-### Tiered loading — 29× fewer tokens at session start
+### Tiered loading — 53× fewer tokens at session start
 
-Measured on a production codebase with 31 graph files:
+Measured on a production codebase: 36 graph files, 251 nodes, accumulated over
+718 commits of real use.
 
 | Approach | Session start | Per task |
 |---|---|---|
-| **simplegraph (tiered)** | **~933 tokens** | **~6,165 tokens** |
-| Monolith (flat file) | ~30,700 tokens | ~30,700 tokens |
+| **simplegraph (tiered)** | **~974 tokens** | **~6,343 tokens** |
+| Monolith (flat file) | ~52,300 tokens | ~52,300 tokens |
 | No memory | 0 up front, ~500–2,000 per re-explanation | compounds |
 
-**42× reduction** at session start. **6× reduction** for a typical task. The savings compound across every request in a session — the agent reads ~944 tokens once, then loads only the 2–3 files relevant to the current task. Run `bash scripts/token_benchmark.sh` on your own graph to measure your numbers.
+**53× reduction** at session start. **8× reduction** for a typical task. The
+savings compound across every request in a session — the agent reads ~974 tokens
+once, then loads only the 2–3 files relevant to the current task.
+
+Note what happens as a graph grows: between measurements this one went from 31
+files to 36, and the flat-file cost rose from ~30,700 to ~52,300 tokens while the
+session-start cost stayed under 1,000. That is the point of tiering — the index
+is bounded by the number of *nodes* you route to, not by how much you have
+recorded about them. A monolith gets worse every time you learn something.
+
+Token counts are estimated at 1.3 tokens/word, not measured with a real
+tokenizer, so treat them as ratios rather than exact figures. Run
+`bash scripts/token_benchmark.sh` on your own graph to measure yours.
 
 ### Typed nodes and edges — follow risk chains
 
@@ -48,7 +61,7 @@ That chain tells the agent exactly what to be careful about and why — in 3 hop
 
 | Approach | Limitation |
 |---|---|
-| **CLAUDE.md / .cursorrules** | Flat files load everything every time. 31 graph files = ~25,400 tokens wasted per request. |
+| **CLAUDE.md / .cursorrules** | Flat files load everything every time. On the 36-file graph benchmarked above, that is ~46,000 tokens of context spent per request on nodes the task never touches. |
 | **Aider repo-map** | Answers "where is X?" but not "what went wrong?" or "why was this decided?" |
 | **Vector DB (Mem0, etc.)** | Requires infrastructure; retrieval is probabilistic — may miss the one invariant that blocks a regression. |
 | **Structural code graphs** (codebase-memory-mcp, code-review-graph, Graphify) | Different problem, not a competitor — see [Works on top of your code graph](#works-on-top-of-your-code-graph). They parse what the code *is*; they can't know what it has *done to you*. |
