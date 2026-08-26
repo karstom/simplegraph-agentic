@@ -29,11 +29,13 @@ curl -fsSL https://raw.githubusercontent.com/karstom/simplegraph-agentic/main/in
 
 ### Cross-platform
 
-Verified on **WSL2 (Ubuntu)** — including projects on a Windows drive under
-`/mnt/c` — and on a separate **Ubuntu 24.04 VM** (kernel 6.8, bash 5.2, git
-2.43, Node 18.19, Universal Ctags 6.1, no npm). macOS support is written
-against its documented constraints but has not been run there;
-`bash scripts/test_adapters.sh` is the check if you have a Mac.
+Verified on all three supported platforms:
+
+| Platform | Notes |
+|---|---|
+| **macOS** | Test suite green under the **system `/bin/bash` 3.2**, not a Homebrew bash — so the bash 3.2 constraints this is written to are actually exercised, and the BSD `sed`/`date` paths are real. |
+| **WSL2 (Ubuntu)** | Including projects on a Windows drive under `/mnt/c`. |
+| **Ubuntu 24.04 VM** | Kernel 6.8, bash 5.2, git 2.43, Node 18.19, Universal Ctags 6.1 (snap), no npm. |
 
 On the Ubuntu VM, from a clean clone: 42/42 adapter tests, 12/12 gate tests,
 one-line install, exclusion flags, and symbol staleness all pass. Two paths
@@ -59,6 +61,14 @@ Verified on WSL with the project on `/mnt/c`:
   BSD/Xcode `ctags` that satisfies `command -v` but cannot emit JSON tags; it
   failed into `|| true` and the run ended with "No symbols found", which reads
   as "your project has no code" rather than "this is the wrong ctags".
+Running against macOS is what surfaced two bash 3.2 bugs that bash 4.4+ hides
+entirely: `token_benchmark.sh` and `auto_map.sh` both expanded a possibly-empty
+array as `"${arr[@]}"`, which bash 3.2 treats as an unbound variable under
+`set -u` and aborts on. Both now use the portable `${arr[@]+"${arr[@]}"}` guard.
+The first macOS run also failed six tests that were entirely the harness —
+`timeout` and `setsid` do not exist there — including one assertion that passed
+for the wrong reason because a missing command still exits non-zero.
+
 - **Root `.gitattributes` pins `eol=lf`.** Confirmed both halves on WSL: a
   CRLF copy of `setup.sh` fails with exactly `$'\r': command not found`
   followed by `set: pipefail: invalid option name`, and a fresh
