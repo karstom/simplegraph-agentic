@@ -1,6 +1,48 @@
 # Changelog
 
-## [Unreleased]
+## [0.6.0] — 2026-08-26
+
+### Fixed
+
+- **A recurring bug could never reach the Recurrence Root-Cause Gate.**
+  `formatNode` emits `**REGRESSED_N_TIMES:**` only when a value was supplied, so
+  a Regression created without one has no such line. The increment then ran a
+  `.replace()` against a line that was not there: nothing changed, the file was
+  rewritten unchanged, and the tool still reported `0 → 1`. Every later
+  recurrence reported `0 → 1` as well, so the counter never reached 2 and the
+  gate could never fire on precisely the bug it exists to catch. The field is
+  now inserted when absent — by the increment path and by a direct
+  `field: "REGRESSED_N_TIMES"` update — matching how `Symbols` and `Paths`
+  already behave on nodes that predate them.
+
+### Changed
+
+- **`sg seed` no longer mints Component nodes for directories that are not
+  modules.** Seeding an infra repo produced `DOCS` and `GITHUB` components whose
+  entire content was "Top-level module `docs/` — N tracked files". Since
+  Components now carry `**Paths:**`, such a node also fires on *every* edit
+  beneath it — noise in the pre-edit safety check, which is where the graph can
+  least afford it.
+
+  Skipped by default: `docs`, `doc`, `documentation`, `examples`, `example`,
+  `samples`, `fixtures`, `testdata`, `__fixtures__`, `coverage`,
+  `node_modules`, `vendor`, `dist`, `build`, `target` — plus **any top-level
+  dot-directory**, stated as a rule rather than a list so `.github`, `.vscode`,
+  `.circleci`, and whatever tool appears next are all covered without an update.
+
+  Deliberately *not* skipped: `public`, `static`, `assets`, `config`, `scripts`.
+  Each is a plausible home for code that really does break; a repeatedly-fixed
+  `client/public/version-gate.js` is exactly what this tool exists to remember.
+
+  Tune with `--skip-component <dir>` and `--keep-component <dir>`, both
+  repeatable. `--keep-component` overrides the defaults, an explicit skip, and
+  the dot-directory rule, so a repo whose source lives in `.platform/` has a way
+  back in. Nothing is lost by skipping: Regressions, Decisions, and Watchlists
+  are mined independently, so an ADR under `docs/` still becomes a Decision —
+  only the directory-level wrapper goes away.
+
+  On a real infra repo this took the seed from 47 nodes to 45, dropping exactly
+  `DOCS` and `GITHUB` and keeping all five genuine modules.
 
 ### One-line install
 

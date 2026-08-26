@@ -125,6 +125,10 @@ export interface SeedOptions {
   types: NodeType[];
   output?: string;          // draft bundle path override
   maxCommits: number;       // default history window when --since absent
+  /** Extra top-level dirs that must not become Component nodes. */
+  skipComponents?: string[];
+  /** Dirs that must become Component nodes even if denied by default. */
+  keepComponents?: string[];
 }
 
 export const DEFAULT_MIN_CONFIDENCE = 0.5;

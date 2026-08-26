@@ -404,3 +404,88 @@ test("budget env vars parse, and malformed values fall back instead of zeroing",
   assert.equal(envInt({ X: "3.5" }, "X", def), def);
   assert.equal(envInt({ X: "1e3" }, "X", def), 1000, "exponent notation is a valid integer");
 });
+
+// ── Recurrence counter on a node that never had one ───────────────────────────
+
+test("incrementing a Regression with no counter field actually advances it", () => {
+  // formatNode omits **REGRESSED_N_TIMES:** when no value was supplied, so a
+  // Regression can exist without the field. The increment used to .replace()
+  // against a line that wasn't there: nothing changed, the file was rewritten
+  // unchanged, and the tool still reported "0 → 1".
+  const dir = tempGraph({ "regressions.md": "" });
+  handleAddNode(
+    {
+      type: "Regression",
+      id: "REG_NOCOUNT",
+      label: "No counter",
+      summary: "Created without regressedNTimes.",
+      priority: "MEDIUM",
+      files: ["src/a.ts"],
+    },
+    dir
+  );
+  const written = readFileSync(join(dir, "regressions.md"), "utf-8");
+  assert.ok(!written.includes("**REGRESSED_N_TIMES:**"), "precondition: no counter field");
+
+  const r = handleUpdateNode(
+    { id: "REG_NOCOUNT", field: "REGRESSED_N_TIMES", value: "increment" },
+    dir
+  );
+  assert.equal(r.isError, undefined);
+  assert.equal(parseNodes(readFileSync(join(dir, "regressions.md"), "utf-8"), "r.md")[0]
+    .regressedNTimes, 1, "counter must be persisted, not just reported");
+});
+
+test("a bug that keeps recurring still reaches the root-cause gate", () => {
+  // The real cost of the no-op: the counter never reached 2, so the gate could
+  // never fire on precisely the bug it exists to catch.
+  const dir = tempGraph({ "regressions.md": "" });
+  handleAddNode(
+    {
+      type: "Regression",
+      id: "REG_RECURS",
+      label: "Recurring",
+      summary: "Created without a counter, then recurs twice.",
+      priority: "MEDIUM",
+      files: ["src/a.ts"],
+    },
+    dir
+  );
+  handleUpdateNode({ id: "REG_RECURS", field: "REGRESSED_N_TIMES", value: "increment" }, dir);
+
+  const second = handleUpdateNode(
+    { id: "REG_RECURS", field: "REGRESSED_N_TIMES", value: "increment" },
+    dir
+  );
+  assert.match(second.content[0].text, /RECURRENCE ROOT-CAUSE GATE/);
+
+  const withCause = handleUpdateNode(
+    {
+      id: "REG_RECURS",
+      field: "REGRESSED_N_TIMES",
+      value: "increment",
+      root_cause: "No single source of truth; both prior fixes patched a mirror.",
+    },
+    dir
+  );
+  assert.equal(withCause.isError, undefined);
+  const n = parseNodes(readFileSync(join(dir, "regressions.md"), "utf-8"), "r.md")[0];
+  assert.equal(n.regressedNTimes, 2);
+  assert.equal(n.priority, "HIGH", "priority auto-upgrades at 2");
+  assert.ok(n.rootCause, "root cause is recorded permanently");
+});
+
+test("the counter can also be set outright on a node that lacks the field", () => {
+  const dir = tempGraph({ "regressions.md": "" });
+  handleAddNode(
+    { type: "Regression", id: "REG_SET", label: "Set", summary: "S.",
+      priority: "LOW", files: ["src/a.ts"] },
+    dir
+  );
+  const r = handleUpdateNode({ id: "REG_SET", field: "REGRESSED_N_TIMES", value: "4" }, dir);
+  assert.equal(r.isError, undefined);
+  const content = readFileSync(join(dir, "regressions.md"), "utf-8");
+  assert.equal(parseNodes(content, "r.md")[0].regressedNTimes, 4);
+  // Inserted in formatNode's order: after Tags, before Edges.
+  assert.match(content, /\*\*Tags:\*\*[^\n]*\n\*\*REGRESSED_N_TIMES:\*\*/);
+});

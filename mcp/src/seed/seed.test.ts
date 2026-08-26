@@ -9,7 +9,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildContext } from "./mine.js";
+import { buildContext, isDeniedComponentDir, DEFAULT_COMPONENT_DENYLIST } from "./mine.js";
 import { contentHash } from "./ids.js";
 import { assembleBundle } from "./bundle.js";
 import { mergeBundle, loadGraphNodes, renderDraft } from "./merge.js";
@@ -457,4 +457,47 @@ test("a Decision mined from a merge commit carries the merged files", () => {
     fromMerge.files.length > 0,
     "merge-derived Decision has no Files, so check_files can never surface it"
   );
+});
+
+// ── Component denylist ────────────────────────────────────────────────────────
+
+test("directories that are not modules do not become Component nodes", () => {
+  // Seeding a real infra repo produced DOCS and GITHUB components whose entire
+  // content was "Top-level module `docs/` — N tracked files". Now that
+  // Components carry **Paths:**, such a node also fires on every edit beneath
+  // it — noise in the pre-edit safety check, which is where the graph can least
+  // afford it.
+  for (const d of ["docs", "documentation", "examples", "fixtures", "node_modules", "dist"]) {
+    assert.equal(isDeniedComponentDir(d, DEFAULT_COMPONENT_DENYLIST), true, d);
+  }
+  // Any top-level dot-directory is tooling config by convention, stated as a
+  // rule rather than enumerated so new tools do not need a list update.
+  for (const d of [".github", ".vscode", ".circleci", ".husky", ".some-new-tool"]) {
+    assert.equal(isDeniedComponentDir(d, DEFAULT_COMPONENT_DENYLIST), true, d);
+  }
+});
+
+test("plausible homes for real code are never denied", () => {
+  // A repeatedly-fixed client/public/version-gate.js is exactly what this tool
+  // exists to remember, so these stay eligible on purpose.
+  for (const d of ["src", "client", "gateway", "compactor", "public", "static",
+                   "assets", "config", "scripts", "lib", "app", "jupyterhub"]) {
+    assert.equal(isDeniedComponentDir(d, DEFAULT_COMPONENT_DENYLIST), false, d);
+  }
+});
+
+test("--skip-component adds, --keep-component overrides everything", () => {
+  assert.equal(isDeniedComponentDir("tools", [...DEFAULT_COMPONENT_DENYLIST, "tools"]), true);
+  // keep beats the defaults …
+  assert.equal(isDeniedComponentDir("docs", DEFAULT_COMPONENT_DENYLIST, ["docs"]), false);
+  // … beats an explicit skip …
+  assert.equal(isDeniedComponentDir("tools", [...DEFAULT_COMPONENT_DENYLIST, "tools"], ["tools"]), false);
+  // … and beats the dot-directory rule, so a repo whose source lives in one
+  // has a way back in.
+  assert.equal(isDeniedComponentDir(".platform", DEFAULT_COMPONENT_DENYLIST, [".platform"]), false);
+});
+
+test("denial is case-insensitive", () => {
+  assert.equal(isDeniedComponentDir("Docs", DEFAULT_COMPONENT_DENYLIST), true);
+  assert.equal(isDeniedComponentDir("DOCS", DEFAULT_COMPONENT_DENYLIST), true);
 });

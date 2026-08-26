@@ -128,7 +128,58 @@ function listWorktreeFiles(repoRoot: string): string[] {
     .filter(f => TEXT_EXT.has(path.extname(f).toLowerCase()) || path.basename(f).startsWith("Dockerfile"));
 }
 
-function findComponentDirs(repoRoot: string, worktreeFiles: string[]): string[] {
+/**
+ * Top-level directories that hold real files but are not *modules*.
+ *
+ * A Component node is meant to answer "what is this part of the system, and
+ * what would an agent get wrong here". `docs/` and `.github/` answer neither:
+ * they produce a node whose whole content is "Top-level module `docs/` — 12
+ * tracked files", and — now that Components carry `**Paths:**` — one that fires
+ * on every edit beneath them. That is noise in the one place the graph can
+ * least afford it, the pre-edit safety check.
+ *
+ * Nothing is lost by skipping them. Regressions, Decisions, and Watchlists are
+ * mined from commits and file contents independently, so an ADR under `docs/`
+ * still becomes a Decision; only the directory-level wrapper goes away.
+ *
+ * Deliberately NOT here: `public`, `static`, `assets`, `config`, `scripts`.
+ * Each is a plausible home for code that really does break — a repeatedly-fixed
+ * `client/public/version-gate.js` is exactly the kind of thing this tool exists
+ * to remember.
+ */
+export const DEFAULT_COMPONENT_DENYLIST = [
+  "docs", "doc", "documentation",
+  "examples", "example", "samples",
+  "fixtures", "testdata", "__fixtures__",
+  "coverage", "node_modules", "vendor", "dist", "build", "target",
+];
+
+/**
+ * Is `dir` skipped as a Component candidate?
+ *
+ * `keep` overrides everything, including the dot-directory rule — otherwise a
+ * repo whose real source lives in a dot-directory would have no way back in.
+ */
+export function isDeniedComponentDir(
+  dir: string,
+  denylist: string[],
+  keep: string[] = []
+): boolean {
+  const d = dir.toLowerCase();
+  if (keep.includes(d)) return false;
+  // Any top-level dot-directory is tooling configuration by convention —
+  // .github, .vscode, .circleci, .husky, .devcontainer — so the rule is stated
+  // once rather than enumerated and left to rot as new tools appear.
+  if (dir.startsWith(".")) return true;
+  return denylist.includes(d);
+}
+
+function findComponentDirs(
+  repoRoot: string,
+  worktreeFiles: string[],
+  denylist: string[] = DEFAULT_COMPONENT_DENYLIST,
+  keep: string[] = []
+): string[] {
   // A top-level directory is a component candidate when it holds ≥ 2 tracked
   // files. Root-level loose files do not form a component.
   const counts = new Map<string, number>();
@@ -141,10 +192,19 @@ function findComponentDirs(repoRoot: string, worktreeFiles: string[]): string[] 
   return [...counts.entries()]
     .filter(([, n]) => n >= 2)
     .map(([d]) => d)
+    .filter(d => !isDeniedComponentDir(d, denylist, keep))
     .sort();
 }
 
-export function buildContext(repoRoot: string, opts: { since?: string; maxCommits: number }): ExtractorContext {
+export function buildContext(
+  repoRoot: string,
+  opts: {
+    since?: string;
+    maxCommits: number;
+    componentDenylist?: string[];
+    componentKeeplist?: string[];
+  }
+): ExtractorContext {
   const abs = path.resolve(repoRoot);
   if (!fs.existsSync(path.join(abs, ".git"))) {
     throw new Error(`${abs} is not a git repository (no .git directory).`);
@@ -160,7 +220,9 @@ export function buildContext(repoRoot: string, opts: { since?: string; maxCommit
     headDate,
     commits,
     worktreeFiles,
-    componentDirs: findComponentDirs(abs, worktreeFiles),
+    componentDirs: findComponentDirs(
+      abs, worktreeFiles, opts.componentDenylist, opts.componentKeeplist
+    ),
     readFile(relPath: string): string {
       if (!cache.has(relPath)) {
         try {

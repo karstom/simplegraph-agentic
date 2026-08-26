@@ -30,6 +30,8 @@ sg seed [PATH]
   --min-confidence <n>   drop draft nodes below threshold (default 0.5)
   --types <list>         restrict to given node types
   --max-per-type <n>     cap per type (default 15)
+  --skip-component <dir> never mint a Component for this top-level directory
+  --keep-component <dir> mint one even though it is skipped by default
   --output <path>        write the draft bundle here
   --yes                  skip the interactive confirm
 ```

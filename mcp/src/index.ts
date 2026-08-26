@@ -442,8 +442,21 @@ function handleUpdateNodeLocked(
       }
     }
 
-    // Apply the increment
-    block = block.replace(/(\*\*REGRESSED_N_TIMES:\*\*[ \t]*)\d+/, (_m, p1: string) => `${p1}${next}`);
+    // Apply the increment.
+    //
+    // formatNode emits **REGRESSED_N_TIMES:** only when the caller supplied a
+    // value, so a Regression created without one has no such line — and a plain
+    // .replace() then matched nothing, wrote the file unchanged, and still
+    // reported "0 → 1". Every subsequent recurrence reported "0 → 1" too, so
+    // the counter never reached 2 and the Recurrence Root-Cause Gate could
+    // never fire on the exact bug it exists to catch. Insert the field when it
+    // is absent instead of silently no-op'ing.
+    if (/\*\*REGRESSED_N_TIMES:\*\*/.test(block)) {
+      block = block.replace(/(\*\*REGRESSED_N_TIMES:\*\*[ \t]*)\d+/, (_m, p1: string) => `${p1}${next}`);
+    } else {
+      // After **Tags:**, matching the order formatNode produces.
+      block = insertAfterField(block, "Tags", `**REGRESSED_N_TIMES:** ${next}`);
+    }
 
     // Auto-upgrade priority to HIGH at >= 2
     if (next >= 2) {
@@ -473,9 +486,12 @@ function handleUpdateNodeLocked(
     // would make an existing graph un-anchorable without hand-editing every
     // node, so insert the field instead — after **Files:**, matching the order
     // formatNode produces.
-    if (field === "Symbols" || field === "Paths") {
-      // Keep formatNode's field order: Files, Symbols, Paths.
-      const anchor = field === "Paths" && /\*\*Symbols:\*\*/.test(block) ? "Symbols" : "Files";
+    if (field === "Symbols" || field === "Paths" || field === "REGRESSED_N_TIMES") {
+      // Keep formatNode's field order: Tags, REGRESSED_N_TIMES, … Files, Symbols, Paths.
+      const anchor =
+        field === "REGRESSED_N_TIMES" ? "Tags"
+        : field === "Paths" && /\*\*Symbols:\*\*/.test(block) ? "Symbols"
+        : "Files";
       block = insertAfterField(block, anchor, `**${field}:** ${resolvedValue}`);
       atomicWriteFileSync(filePath, loc.before + block + loc.after);
       return ok(`✓ Added **${field}** to NODE: ${id} → "${resolvedValue}" in ${node.sourceFile}.`);
@@ -750,7 +766,7 @@ export function handleSeedCandidates(
 // ── MCP Server ────────────────────────────────────────────────────────────────
 
 /** Single source for the version this server reports and prints. */
-const SERVER_VERSION = "0.5.0";
+const SERVER_VERSION = "0.6.0";
 
 const server = new Server(
   { name: "simplegraph-mcp", version: SERVER_VERSION },
