@@ -1,5 +1,100 @@
 # Changelog
 
+## [0.5.0] — 2026-08-26
+
+### Blast-radius anchoring — compose with a structural code graph
+
+simplegraph stores judgment, not structure: what regressed, what's forbidden, why
+the code is the way it is. Structural code graphs (codebase-memory-mcp,
+code-review-graph, Graphify, an LSP) store the opposite and can compute what an
+edit touches. Neither answers the other's question, so this release adds the seam
+between them rather than a second parser.
+
+- **`simplegraph_check_files` accepts a blast radius.** Alongside `files`, it now
+  takes `symbols`, `related_files`, and `related_symbols`. Fill the last two from
+  whatever structural tool you already have; simplegraph reports which parts of
+  that radius have a recorded history. Results are grouped — directly affected
+  first, then blast radius — with a `Matched on:` line per node explaining why it
+  fired, so widening the radius adds context instead of burying the file being
+  edited. All arguments are optional and an unexpanded call behaves as before.
+- **`**Symbols:**` node anchor.** Matches a function/class/method name, qualified
+  or bare (`AuthService.refreshToken` ↔ `refreshToken`), anchored at a separator so
+  `Foo.run` never collides with `Bar.run`. A path-only anchor breaks silently when
+  a file is renamed; a symbol survives the move, and fires when a *caller* is
+  edited — usually where the bug is actually reintroduced.
+- **`**Paths:**` node anchor.** Directory containment, intended for Component
+  nodes: `COMP_AUTH` owning `src/auth` fires for any file beneath it, including
+  files that did not exist when the node was written. Segment-wise, so `src/auth`
+  does not match `src/authz`, and an absolute path from an external tool still
+  matches a repo-relative owned path.
+- **`stale_check.sh` covers the new anchors.** Reports `Paths` that are no longer
+  directories, and `Symbols` absent from `auto_map.md` — skipped entirely when no
+  `auto_map.md` has been generated, rather than flagging every symbol.
+### Configurable
+
+- **Output budget.** `SIMPLEGRAPH_CHECK_DETAIL_LIMIT` (5),
+  `SIMPLEGRAPH_CHECK_DIGEST_LIMIT` (20), `SIMPLEGRAPH_CHECK_DIGEST_CHARS` (180),
+  and `SIMPLEGRAPH_EDGE_PREVIEW` (6) tune `check_files` output. Defaults are tuned
+  against a 251-node graph; raise them on a small graph, lower them when many
+  nodes match one edit. `0` is legal and pushes a group to its terser form — it
+  never hides a node. A malformed value falls back to the default rather than
+  collapsing to zero and suppressing safety output.
+- **`auto_map.sh` exclusions.** `--exclude DIR` adds and `--include DIR` removes,
+  both repeatable; `SIMPLEGRAPH_EXCLUDE_DIRS` / `SIMPLEGRAPH_EXCLUDE_PATTERNS`
+  replace the default lists, with flags applied on top. The worktree defaults are
+  a heuristic — a project with real source in a `worktrees/` directory recovers it
+  with `--include worktrees`. Unknown options and missing flag values now exit 2
+  instead of being silently read as the project path.
+
+### Fixed — found by running against live repositories
+
+Validated against four real repos, including a 251-node production graph built by
+real usage over 718 commits.
+
+- **Hand-written `**Files:**` lists were silently ignored.** The parser extracted
+  only backtick-wrapped entries. On a real graph the single highest-value node — a
+  regression that had recurred **six times**, with a full root-cause writeup —
+  listed its ten files without backticks, so it parsed as having no anchors and
+  never fired in `check_files`. It read as healthy in every listing while guarding
+  nothing. List fields now fall back to a comma-separated split when the line
+  carries no backticks. Audited across 615 real nodes / 1,605 anchors: zero
+  spurious entries.
+- **`check_files` could return more context than it saved.** A realistic two-file
+  edit with a four-file blast radius returned 34 nodes as ~14,500 tokens — more
+  than the project's entire per-task budget, on a tool whose premise is reading
+  ~50 lines instead of 5,000. Full records are now reserved for the top-ranked
+  direct hits; everything else is digested to one compact block, and inline edge
+  lists are capped (one seeded Component spent ~1.4k tokens dumping 36 `CONTAINS`
+  edges). The same query now costs ~4,900 tokens — 66% less, with every one of the
+  34 nodes still represented and **nothing on the direct path hidden**.
+- **`sg seed` left Component nodes unanchored.** The structure extractor derives a
+  Component *from* a directory, then recorded only three sample files — which
+  cannot represent a 275-file module. Seeded Components now carry `**Paths:**`, so
+  directory ownership works out of the box. (`SEED_VERSION` → 0.4.0.)
+- **`auto_map.sh` corrupted hidden-directory paths.** With a relative project dir
+  (`auto_map.sh .`), the prefix strip turned `.claude/x/y.ts` into `laude/x/y.ts`,
+  so no such entry could be matched back to a real file. The project directory is
+  now resolved to an absolute path and the prefix is only stripped at a separator
+  boundary.
+- **`setup.sh` miscounted a pristine graph as populated.** A raw
+  `grep -c '^## NODE:'` counted the template's commented-out examples, so a fresh
+  install reported "7 node(s)" — directly above a destructive "wipe all graph
+  data" option. Users were asked to protect data they did not have, and a real
+  graph counted its examples too. Now uses the same fence/comment stripping as
+  `consistency_check.sh`, so the installer and the gate agree, and an empty
+  install says so plainly.
+- **`auto_map.sh` indexed agent worktrees.** `.claude/worktrees/` holds complete
+  duplicate checkouts: on a live repo they made up **47% of the generated map**
+  (106,517 → 56,538 lines once excluded). Worse for the new symbol check, a stale
+  worktree copy keeps a deleted symbol visible — masking exactly the drift
+  `stale_check.sh` exists to find.
+
+- **No migration.** Both fields are optional and are emitted only when populated,
+  so a node with neither renders byte-identically to previous versions and every
+  recorded `sg seed` content hash is unaffected. `simplegraph_update_node` inserts
+  `Symbols` / `Paths` into nodes that predate the fields instead of refusing the
+  write, so an existing graph can adopt anchoring node by node.
+
 ## [0.4.0] — 2026-07-22
 
 ### Multi-agent development safety

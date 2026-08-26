@@ -7,6 +7,8 @@
 # Checks for:
 #   1. Nodes with LastUpdated older than MAX_AGE_DAYS (default: 90)
 #   2. Nodes referencing file paths that no longer exist on disk
+#   3. Nodes owning **Paths:** directories that no longer exist
+#   4. Nodes anchored to **Symbols:** absent from auto_map.md (skipped if unmapped)
 #
 # Exit code: 0 if clean, 1 if stale nodes found
 
@@ -139,6 +141,85 @@ if [ -n "${DEAD_REFS}" ]; then
   FOUND_STALE=true
 else
   echo "  ✓ All file references are valid."
+fi
+
+echo ""
+
+# ── check 3: dead path ownership ─────────────────────────────────────────────
+# **Paths:** entries name directories a node owns (mainly Component nodes). A
+# path that no longer exists means the node's ownership matching silently stops
+# firing — the node still reads as live but no longer guards anything.
+echo "── Nodes owning paths that no longer exist ──"
+
+DEAD_PATHS=$(find "${CORE_DIR}" -name '*.md' -not -name 'auto_map.md' -not -name '.scratchpad.md' | sort | while IFS= read -r mdfile; do
+  strip_noise "$mdfile" \
+    | awk '
+        match($0, /^## NODE: [A-Z][A-Z0-9_]*$/) { node = substr($0, 10); next }
+        /^\*\*Paths:\*\*/ { printf "%s\t%s\n", (node == "" ? "unknown" : node), $0 }
+      ' \
+    | while IFS="$(printf '\t')" read -r node pathline; do
+        echo "$pathline" | grep -Eo '`[^`]+`' | tr -d '`' | while IFS= read -r ref; do
+          [ -n "$ref" ] || continue
+          if [ ! -d "${PROJECT_DIR}/${ref}" ]; then
+            echo "  💀 ${node} → ${ref}/ (directory not found, in $(basename "$mdfile"))"
+          fi
+        done
+      done
+done)
+
+if [ -n "${DEAD_PATHS}" ]; then
+  echo "${DEAD_PATHS}"
+  FOUND_STALE=true
+else
+  echo "  ✓ All owned paths exist."
+fi
+
+echo ""
+
+# ── check 4: symbols missing from the structural map ─────────────────────────
+# A **Symbols:** anchor outlives a file rename — that is the point of it — but
+# not a deletion or a rename of the symbol itself. auto_map.md is the cheapest
+# available symbol inventory; when it is absent the check is skipped rather
+# than guessed at, because reporting every symbol as missing would be worse
+# than reporting none.
+echo "── Nodes anchored to symbols not found in auto_map.md ──"
+
+AUTO_MAP="${CORE_DIR}/auto_map.md"
+if [ ! -f "${AUTO_MAP}" ]; then
+  echo "  — Skipped: no auto_map.md. Generate it with: bash scripts/auto_map.sh"
+else
+  MISSING_SYMS=$(find "${CORE_DIR}" -name '*.md' -not -name 'auto_map.md' -not -name '.scratchpad.md' | sort | while IFS= read -r mdfile; do
+    strip_noise "$mdfile" \
+      | awk '
+          match($0, /^## NODE: [A-Z][A-Z0-9_]*$/) { node = substr($0, 10); next }
+          /^\*\*Symbols:\*\*/ { printf "%s\t%s\n", (node == "" ? "unknown" : node), $0 }
+        ' \
+      | while IFS="$(printf '\t')" read -r node symline; do
+          echo "$symline" | grep -Eo '`[^`]+`' | tr -d '`' | while IFS= read -r ref; do
+            [ -n "$ref" ] || continue
+            # Compare on the unqualified tail: a node may record
+            # AuthService.refreshToken while ctags emits only refreshToken.
+            TAIL="${ref##*.}"
+            TAIL="${TAIL##*::}"
+            TAIL="${TAIL##*#}"
+            # auto_map wraps every symbol in backticks, so anchoring on the
+            # opening backtick avoids matching the name inside a signature.
+            if ! grep -qF "\`${TAIL}" "${AUTO_MAP}"; then
+              echo "  ❓ ${node} → ${ref} (not in auto_map.md, from $(basename "$mdfile"))"
+            fi
+          done
+        done
+  done)
+
+  if [ -n "${MISSING_SYMS}" ]; then
+    echo "${MISSING_SYMS}"
+    echo ""
+    echo "  Note: auto_map.md only covers what ctags parses. Verify before deleting a node —"
+    echo "  regenerate with 'bash scripts/auto_map.sh' first if the map is out of date."
+    FOUND_STALE=true
+  else
+    echo "  ✓ All anchored symbols found."
+  fi
 fi
 
 echo ""

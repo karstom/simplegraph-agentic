@@ -12,6 +12,21 @@ export interface GraphNode {
   rootCause?: string;
   edges: string[];
   files: string[];
+  /**
+   * Symbols (function, class, or method names) this node is anchored to.
+   *
+   * A path-only anchor breaks the moment a file is renamed; a symbol survives
+   * the move. Anchoring both lets check_files fire on a symbol an external code
+   * graph reports in the blast radius of an edit, even when the edited file is
+   * not the one named on the node.
+   */
+  symbols: string[];
+  /**
+   * Directory prefixes this node owns. Matched by prefix, not by basename, so a
+   * Component that owns `src/auth` fires for any file beneath it. Intended for
+   * Component nodes; coarse enough not to churn on every commit.
+   */
+  paths: string[];
   lastUpdated: string;
   /** Who created the node — an agent/tool name or human, for multi-agent attribution. */
   author?: string;
@@ -83,9 +98,28 @@ export function parseNodes(content: string, sourceFile: string): GraphNode[] {
       section.match(/\*\*Edges:\*\*\n([\s\S]*?)(?=\n\*\*[A-Za-z]|\n---|$)/)?.[1] ?? "";
     const edges = (edgesBlock.match(/- .+/g) ?? []).map(e => e.trim());
 
-    // Files: strip backticks
-    const filesStr = get("Files");
-    const files = (filesStr.match(/`[^`]+`/g) ?? []).map(f => f.slice(1, -1));
+    /**
+     * List fields: **Files:** `a.ts`, `b.ts`
+     *
+     * Backticks are the documented form and what formatNode emits, but humans
+     * writing a node by hand routinely omit them — and those hand-written nodes
+     * are the highest-value ones in a real graph. Extracting only backticked
+     * entries silently parsed such a node as having no anchors at all, so it
+     * never matched in check_files: the node looked healthy in every listing
+     * while guarding nothing. Fall back to a comma-separated split when the
+     * line carries no backticks.
+     */
+    const listField = (field: string): string[] => {
+      const raw = get(field);
+      if (!raw) return [];
+      const quoted = raw.match(/`[^`]+`/g);
+      if (quoted) return quoted.map(v => v.slice(1, -1));
+      if (/^_?\(none\)_?$/.test(raw.trim())) return [];
+      return raw.split(",").map(v => v.trim()).filter(Boolean);
+    };
+    const files = listField("Files");
+    const symbols = listField("Symbols");
+    const paths = listField("Paths");
 
     // Tags: comma-separated plain text; filter placeholder
     const tagsStr = get("Tags");
@@ -107,6 +141,8 @@ export function parseNodes(content: string, sourceFile: string): GraphNode[] {
       rootCause: rootCauseMatch ? rootCauseMatch[1].trim() : undefined,
       edges,
       files,
+      symbols,
+      paths,
       lastUpdated: get("LastUpdated"),
       author: get("Author") || undefined,
       session: get("Session") || undefined,
@@ -120,7 +156,8 @@ export function parseNodes(content: string, sourceFile: string): GraphNode[] {
 
 /** Format a node as a markdown block ready to append to a file. */
 export function formatNode(
-  node: Omit<GraphNode, "rawContent" | "sourceFile">
+  node: Omit<GraphNode, "rawContent" | "sourceFile" | "symbols" | "paths">
+    & { symbols?: string[]; paths?: string[] }
 ): string {
   const lines: string[] = [
     `## NODE: ${node.id}`,
@@ -145,6 +182,12 @@ export function formatNode(
     lines.push(`**Edges:** _(none)_`);
   }
   lines.push(`**Files:** ${node.files.length > 0 ? node.files.map(f => `\`${f}\``).join(", ") : "_(none)_"}`);
+  // Emitted only when populated: a node with neither field renders exactly as it
+  // did before these fields existed, so `sg seed` content hashes do not shift.
+  if (node.symbols?.length)
+    lines.push(`**Symbols:** ${node.symbols.map(s => `\`${s}\``).join(", ")}`);
+  if (node.paths?.length)
+    lines.push(`**Paths:** ${node.paths.map(p => `\`${p}\``).join(", ")}`);
   lines.push(`**LastUpdated:** ${node.lastUpdated}`);
   if (node.author) lines.push(`**Author:** ${node.author}`);
   if (node.session) lines.push(`**Session:** ${node.session}`);

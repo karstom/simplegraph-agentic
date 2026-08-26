@@ -118,7 +118,65 @@ function fail(text: string): ToolResult {
   return { content: [{ type: "text", text: `Error: ${text}` }], isError: true };
 }
 
-function summarizeNodes(nodes: GraphNode[]): string {
+/**
+ * Output budget for check_files.
+ *
+ * The whole premise of the graph is that an agent reads ~50 lines at session
+ * start instead of 5,000. A safety check that returns 34 full node records
+ * (~14k tokens measured on a real 251-node graph) spends more context than the
+ * memory it is protecting, and an agent that learns the tool is expensive stops
+ * calling it. So: full records for what you are editing, digests for the blast
+ * radius — which is context, not the main event — and a hard cap on both.
+ */
+/**
+ * Read a non-negative integer from the environment, falling back to `fallback`
+ * when unset, unparseable, or negative. A malformed budget must not silently
+ * become 0 and suppress the safety output the tool exists to produce.
+ */
+export function envInt(
+  env: Record<string, string | undefined>,
+  name: string,
+  fallback: number
+): number {
+  const raw = env[name];
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0) return fallback;
+  return n;
+}
+
+// Defaults tuned against a 251-node production graph. Raise them on a small
+// graph where full records are affordable; lower them when many nodes match a
+// single edit. 0 is legal: it pushes every node in that group to the terser
+// form rather than hiding it.
+const EDGE_PREVIEW         = envInt(process.env, "SIMPLEGRAPH_EDGE_PREVIEW", 6);
+const DIRECT_DETAIL_LIMIT  = envInt(process.env, "SIMPLEGRAPH_CHECK_DETAIL_LIMIT", 5);
+const RADIUS_DIGEST_LIMIT  = envInt(process.env, "SIMPLEGRAPH_CHECK_DIGEST_LIMIT", 20);
+const DIGEST_SUMMARY_CHARS = envInt(process.env, "SIMPLEGRAPH_CHECK_DIGEST_CHARS", 180);
+
+/** Clip to a whole word, without cutting mid-token. */
+function clip(text: string, max: number): string {
+  if (text.length <= max) return text;
+  return text.slice(0, max).replace(/\s+\S*$/, "") + "…";
+}
+
+/**
+ * One compact line-block per node: enough to decide whether to pull the full
+ * record with simplegraph_get_node, and no more.
+ */
+export function digestNodes(hits: NodeHit[]): string {
+  return hits.map(h => {
+    const n = h.node;
+    const recur = n.regressedNTimes !== undefined ? `, ×${n.regressedNTimes}` : "";
+    return (
+      `- **${n.id}** (${n.type}, ${n.priority}${recur}) — ${n.label}\n` +
+      `  _matched on: ${h.reasons.join("; ")}_\n` +
+      `  ${clip(n.summary, DIGEST_SUMMARY_CHARS)}`
+    );
+  }).join("\n");
+}
+
+export function summarizeNodes(nodes: GraphNode[]): string {
   return nodes.map(n => {
     const lines = [
       `### ${n.id}`,
@@ -132,10 +190,22 @@ function summarizeNodes(nodes: GraphNode[]): string {
       lines.push(`**REGRESSED_N_TIMES:** ${n.regressedNTimes}`);
     if (n.rootCause)
       lines.push(`**RootCause:** ${n.rootCause}`);
-    if (n.edges.length)
-      lines.push(`**Edges:** ${n.edges.join(" · ")}`);
+    if (n.edges.length) {
+      // A seeded Component can carry 30+ CONTAINS edges. Dumping them inline
+      // costs more context than the node's own content and buries it.
+      const shown = n.edges.slice(0, EDGE_PREVIEW);
+      const extra = n.edges.length - shown.length;
+      const more = extra > 0 ? `_(+${extra} more — simplegraph_get_node ${n.id})_` : "";
+      // With EDGE_PREVIEW=0 there is nothing to join, so emit the count alone
+      // rather than a line that starts with a dangling separator.
+      lines.push(`**Edges:** ${[...shown, more].filter(Boolean).join(" · ")}`);
+    }
     if (n.files.length)
       lines.push(`**Files:** ${n.files.map(f => `\`${f}\``).join(", ")}`);
+    if (n.symbols.length)
+      lines.push(`**Symbols:** ${n.symbols.map(x => `\`${x}\``).join(", ")}`);
+    if (n.paths.length)
+      lines.push(`**Paths:** ${n.paths.map(x => `\`${x}\``).join(", ")}`);
     lines.push(`**LastUpdated:** ${n.lastUpdated} | **Source:** ${n.sourceFile}`);
     return lines.join("\n");
   }).join("\n\n---\n\n");
@@ -176,6 +246,130 @@ export function pathMatches(nodeFile: string, target: string): boolean {
   const [short, long] = a.length <= b.length ? [a, b] : [b, a];
   const offset = long.length - short.length;
   return short.every((seg, i) => seg === long[offset + i]);
+}
+
+/**
+ * Does `target` live under the directory `dir`?
+ *
+ * Segment-wise containment rather than a raw string prefix, so `src/auth`
+ * matches `src/auth/token.ts` but not `src/authz/token.ts`. The run may start
+ * at any segment so an absolute path from an external code graph
+ * (`/home/me/proj/src/auth/token.ts`) matches a repo-relative owned path.
+ */
+export function pathUnderDir(dir: string, target: string): boolean {
+  const norm = (p: string) =>
+    p.replace(/\\/g, "/").toLowerCase().split("/").filter(seg => seg && seg !== ".");
+  const d = norm(dir);
+  const t = norm(target);
+  if (!d.length || !t.length || d.length > t.length) return false;
+  for (let i = 0; i + d.length <= t.length; i++) {
+    if (d.every((seg, j) => seg === t[i + j])) return true;
+  }
+  return false;
+}
+
+/**
+ * Does a node's anchored symbol refer to the same thing as `target`?
+ *
+ * Qualified and bare forms are treated as equal (`AuthService.refreshToken`
+ * matches `refreshToken`), because a node is usually written with the
+ * qualified name while a code graph reports whichever form its parser emits.
+ * Matching is anchored at a separator, so `Foo.run` does not match `Bar.run` —
+ * a bare tail comparison would make every `run`/`handle`/`init` collide.
+ */
+export function symbolMatches(nodeSymbol: string, target: string): boolean {
+  const a = nodeSymbol.trim().toLowerCase();
+  const b = target.trim().toLowerCase();
+  if (!a || !b) return false;
+  if (a === b) return true;
+  return ["." , "#", "::"].some(sep => a.endsWith(sep + b) || b.endsWith(sep + a));
+}
+
+export interface NodeHit {
+  node: GraphNode;
+  /** Why this node fired, so the agent can weigh a direct hit against a distant one. */
+  reasons: string[];
+  /** True when the node is anchored to something being edited, not merely reachable from it. */
+  direct: boolean;
+}
+
+/**
+ * Match memory nodes against an edit and, optionally, its blast radius.
+ *
+ * simplegraph deliberately does not compute the blast radius itself — parsing
+ * call graphs is what a structural code graph (codebase-memory-mcp,
+ * code-review-graph, Graphify, or a plain grep) already does well. The caller
+ * expands the edit into the surrounding `related_files` / `related_symbols` and
+ * this function supplies the part those tools cannot: whether anything in that
+ * radius has a recorded history.
+ *
+ * Direct hits are ranked above transitive ones so a widened radius adds context
+ * without burying the file actually being edited.
+ */
+export function matchNodes(
+  nodes: GraphNode[],
+  scope: {
+    files?: string[];
+    symbols?: string[];
+    related_files?: string[];
+    related_symbols?: string[];
+  }
+): NodeHit[] {
+  const files = scope.files ?? [];
+  const symbols = scope.symbols ?? [];
+  const relatedFiles = scope.related_files ?? [];
+  const relatedSymbols = scope.related_symbols ?? [];
+
+  const list = (xs: string[]) => xs.map(x => `\`${x}\``).join(", ");
+
+  const hits: NodeHit[] = [];
+  for (const node of nodes) {
+    const byFile = (targets: string[]) =>
+      node.files.filter(nf => targets.some(t => pathMatches(nf, t)));
+    const byOwnedPath = (targets: string[]) =>
+      node.paths.filter(np => targets.some(t => pathUnderDir(np, t)));
+    const bySymbol = (targets: string[]) =>
+      node.symbols.filter(ns => targets.some(t => symbolMatches(ns, t)));
+
+    const directFiles = byFile(files);
+    const directPaths = byOwnedPath(files);
+    const directSymbols = bySymbol(symbols);
+
+    // Subtract the direct matches so a node anchored to both an edited file and
+    // a radius file is reported once, at its strongest reason.
+    const radiusFiles = byFile(relatedFiles).filter(f => !directFiles.includes(f));
+    const radiusPaths = byOwnedPath(relatedFiles).filter(p => !directPaths.includes(p));
+    const radiusSymbols = bySymbol(relatedSymbols).filter(x => !directSymbols.includes(x));
+
+    const reasons: string[] = [];
+    if (directFiles.length)   reasons.push(`edited file ${list(directFiles)}`);
+    if (directSymbols.length) reasons.push(`edited symbol ${list(directSymbols)}`);
+    if (directPaths.length)   reasons.push(`owns path ${list(directPaths)}`);
+    if (radiusFiles.length)   reasons.push(`blast radius — file ${list(radiusFiles)}`);
+    if (radiusSymbols.length) reasons.push(`blast radius — symbol ${list(radiusSymbols)}`);
+    if (radiusPaths.length)   reasons.push(`blast radius — owns path ${list(radiusPaths)}`);
+
+    if (!reasons.length) continue;
+    const direct = Boolean(directFiles.length || directSymbols.length || directPaths.length);
+    hits.push({ node, reasons, direct });
+  }
+
+  const rank = (h: NodeHit) => (h.direct ? 0 : 2) + (h.node.priority === "HIGH" ? 0 : 1);
+  return hits.sort((a, b) => rank(a) - rank(b));
+}
+
+/**
+ * Insert `line` immediately after the `**<anchor>:**` field of an isolated node
+ * block, falling back to the end of the block when that anchor is absent.
+ * Operates on an already-isolated block (see findNodeBlock), so it cannot reach
+ * into a neighbouring node.
+ */
+function insertAfterField(block: string, anchor: string, line: string): string {
+  const pattern = new RegExp(`(\\*\\*${escapeRe(anchor)}:\\*\\*[^\\n]*)`);
+  if (pattern.test(block)) {
+    return block.replace(pattern, (_m, p1: string) => `${p1}\n${line}`);
+  }
+  return `${block.replace(/\s*$/, "")}\n${line}\n`;
 }
 
 // Insert or update the **RootCause:** field within a single node's block.
@@ -274,6 +468,18 @@ function handleUpdateNodeLocked(
   // new value are inserted literally rather than re-expanded.
   const fieldPattern = new RegExp(`(\\*\\*${escapeRe(field)}:\\*\\*[ \\t]*).+`);
   if (!fieldPattern.test(block)) {
+    // Symbols and Paths are emitted only when populated, so every node written
+    // before they existed lacks the line entirely. Refusing the update there
+    // would make an existing graph un-anchorable without hand-editing every
+    // node, so insert the field instead — after **Files:**, matching the order
+    // formatNode produces.
+    if (field === "Symbols" || field === "Paths") {
+      // Keep formatNode's field order: Files, Symbols, Paths.
+      const anchor = field === "Paths" && /\*\*Symbols:\*\*/.test(block) ? "Symbols" : "Files";
+      block = insertAfterField(block, anchor, `**${field}:** ${resolvedValue}`);
+      atomicWriteFileSync(filePath, loc.before + block + loc.after);
+      return ok(`✓ Added **${field}** to NODE: ${id} → "${resolvedValue}" in ${node.sourceFile}.`);
+    }
     return fail(`Field **${field}:** not found in NODE: ${id}. Check the field name.`);
   }
   block = block.replace(fieldPattern, (_m, p1: string) => `${p1}${resolvedValue}`);
@@ -284,7 +490,8 @@ function handleUpdateNodeLocked(
 export function handleAddNode(
   args: {
     type: string; id: string; label: string; summary: string; priority: string;
-    tags?: string[]; files?: string[]; edges?: string[];
+    tags?: string[]; files?: string[]; symbols?: string[]; paths?: string[];
+    edges?: string[];
     regressedNTimes?: number; root_cause?: string;
     author?: string; session?: string;
   },
@@ -309,7 +516,8 @@ export function handleAddNode(
 function handleAddNodeLocked(
   args: {
     type: string; id: string; label: string; summary: string; priority: string;
-    tags?: string[]; files?: string[]; edges?: string[];
+    tags?: string[]; files?: string[]; symbols?: string[]; paths?: string[];
+    edges?: string[];
     regressedNTimes?: number; root_cause?: string;
     author?: string; session?: string;
   },
@@ -318,7 +526,7 @@ function handleAddNodeLocked(
 ): ToolResult {
   const {
     type, id, label, summary, priority,
-    tags = [], files = [], edges = [], regressedNTimes, root_cause,
+    tags = [], files = [], symbols = [], paths = [], edges = [], regressedNTimes, root_cause,
     author, session,
   } = args;
 
@@ -346,7 +554,7 @@ function handleAddNodeLocked(
   const resolvedAuthor = author?.trim() || DEFAULT_AUTHOR;
   const resolvedSession = session?.trim() || DEFAULT_SESSION;
   const nodeText = formatNode({
-    id, type, priority, label, summary, tags, files, edges,
+    id, type, priority, label, summary, tags, files, symbols, paths, edges,
     lastUpdated: today, regressedNTimes, rootCause: rc,
     author: resolvedAuthor, session: resolvedSession,
   });
@@ -541,8 +749,11 @@ export function handleSeedCandidates(
 
 // ── MCP Server ────────────────────────────────────────────────────────────────
 
+/** Single source for the version this server reports and prints. */
+const SERVER_VERSION = "0.5.0";
+
 const server = new Server(
-  { name: "simplegraph-mcp", version: "0.4.0" },
+  { name: "simplegraph-mcp", version: SERVER_VERSION },
   { capabilities: { tools: {} } }
 );
 
@@ -576,8 +787,16 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       name: "simplegraph_check_files",
       description:
         "CALL THIS BEFORE EDITING ANY FILE. Returns any regressions, watchlists, or " +
-        "invariants that reference the files you plan to modify. Prevents reintroducing " +
-        "known bugs and flags high-risk code areas.",
+        "invariants that reference the code you plan to modify. Prevents reintroducing " +
+        "known bugs and flags high-risk code areas.\n\n" +
+        "EXPAND FIRST FOR BEST RESULTS. A bug is often recorded against the caller, not " +
+        "the line you are changing. If you have a structural code graph available " +
+        "(codebase-memory-mcp, code-review-graph, Graphify, an LSP, or even `grep -r` for " +
+        "the symbol), use it FIRST to find the callers, dependents, and tests affected by " +
+        "your edit, then pass those in `related_files` / `related_symbols`. This server " +
+        "does not compute the blast radius itself — it tells you which parts of the radius " +
+        "you supply have a recorded history. Results are grouped: directly affected nodes " +
+        "first, then nodes reached through the radius.",
       inputSchema: {
         type: "object",
         properties: {
@@ -586,8 +805,29 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             items: { type: "string" },
             description: "File paths you plan to modify (relative paths, basenames, or full paths all work)",
           },
+          symbols: {
+            type: "array",
+            items: { type: "string" },
+            description:
+              "Symbols you plan to modify, qualified or bare (e.g. 'AuthService.refreshToken' or 'refreshToken'). " +
+              "Matches nodes anchored to a symbol even after the file was renamed.",
+          },
+          related_files: {
+            type: "array",
+            items: { type: "string" },
+            description:
+              "Blast radius: files that call, depend on, or test what you are editing — as reported by " +
+              "your structural code graph. Matches here are reported separately from direct hits.",
+          },
+          related_symbols: {
+            type: "array",
+            items: { type: "string" },
+            description:
+              "Blast radius: callers and dependents of the symbols you are editing, as reported by " +
+              "your structural code graph.",
+          },
         },
-        required: ["files"],
+        required: [],
       },
     },
     {
@@ -631,6 +871,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           priority:        { type: "string", enum: ["HIGH", "MEDIUM", "LOW"] },
           tags:            { type: "array", items: { type: "string" }, description: "Lowercase tags for similarity search, e.g. ['auth', 'token', 'session']" },
           files:           { type: "array", items: { type: "string" }, description: "Affected file paths" },
+          symbols:         { type: "array", items: { type: "string" }, description: "Affected symbols — functions, classes, or methods (e.g. ['AuthService.refreshToken']). Anchoring to a symbol as well as a file keeps the node matchable after a rename, and lets it fire when a caller is edited." },
+          paths:           { type: "array", items: { type: "string" }, description: "Directory prefixes this node owns (e.g. ['src/auth']). Mainly for Component nodes: any file beneath an owned path matches. Keep these coarse — a directory, not a file." },
           edges:           { type: "array", items: { type: "string" }, description: "Edge strings: 'VIOLATED_BY → INV_X: explanation'" },
           regressedNTimes: { type: "number", description: "For Regression nodes: how many times this has occurred" },
           root_cause:      { type: "string", description: "Required when regressedNTimes ≥ 2. Must answer: (1) authoritative source of truth, (2) specific invariant violated, (3) why prior fixes were symptomatic." },
@@ -659,12 +901,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           id:         { type: "string", description: "Node ID to update" },
           field: {
             type: "string",
-            enum: ["Label", "Summary", "Priority", "Tags", "LastUpdated", "REGRESSED_N_TIMES", "Files"],
-            description: "Field to update",
+            enum: ["Label", "Summary", "Priority", "Tags", "LastUpdated", "REGRESSED_N_TIMES", "Files", "Symbols", "Paths"],
+            description:
+              "Field to update. Symbols and Paths are inserted if the node does not have them yet, " +
+              "so nodes written before those fields existed can be anchored without a rewrite.",
           },
           value: {
             type: "string",
-            description: "New value. For REGRESSED_N_TIMES, use 'increment' to add 1. For LastUpdated, use 'today'.",
+            description:
+              "New value. For REGRESSED_N_TIMES, use 'increment' to add 1. For LastUpdated, use 'today'. " +
+              "For Files, Symbols, and Paths, pass a comma-separated list with each entry in backticks, " +
+              "e.g. '`src/auth/token.ts`, `src/auth/session.ts`' — unbackticked entries parse as empty.",
           },
           root_cause: {
             type: "string",
@@ -826,30 +1073,67 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "simplegraph_check_files": {
-        const { files } = args as { files: string[] };
-        if (!files.length) return ok("No files provided.");
+        const {
+          files = [], symbols = [], related_files = [], related_symbols = [],
+        } = args as {
+          files?: string[]; symbols?: string[];
+          related_files?: string[]; related_symbols?: string[];
+        };
+        if (!files.length && !symbols.length && !related_files.length && !related_symbols.length)
+          return ok("No files provided.");
 
-        const allNodes = getAllNodes();
-        const hits = allNodes.filter(node =>
-          node.files.some(nodeFile =>
-            files.some(target => {
-              const n = nodeFile.replace(/\\/g, "/").toLowerCase();
-              const t = target.replace(/\\/g, "/").toLowerCase();
-              return pathMatches(n, t);
-            })
-          )
-        );
+        const hits = matchNodes(getAllNodes(), { files, symbols, related_files, related_symbols });
 
-        if (!hits.length) return ok("✓ No known issues for these files. Proceed carefully.");
+        if (!hits.length) {
+          const scope = related_files.length || related_symbols.length
+            ? " (including the blast radius you supplied)"
+            : "";
+          return ok(`✓ No known issues for these files${scope}. Proceed carefully.`);
+        }
 
-        const high = hits.filter(n => n.priority === "HIGH");
-        const other = hits.filter(n => n.priority !== "HIGH");
-        const sorted = [...high, ...other];
+        const direct = hits.filter(h => h.direct);
+        const transitive = hits.filter(h => !h.direct);
+        const high = hits.filter(h => h.node.priority === "HIGH");
+
+        const overflow = (shown: number, total: number, what: string) =>
+          total > shown
+            ? `\n\n_${total - shown} further ${what} not shown (ranked lower). ` +
+              `Narrow the radius, or list them with simplegraph_search._`
+            : "";
+
+        const sections: string[] = [];
+
+        if (direct.length) {
+          // Nothing on the direct path is ever dropped: past the detail limit the
+          // remainder is digested rather than hidden. A node you are editing that
+          // silently fails to appear is the failure this tool exists to prevent.
+          const full = direct.slice(0, DIRECT_DETAIL_LIMIT);
+          const rest = direct.slice(DIRECT_DETAIL_LIMIT);
+          sections.push(
+            `## Directly affected (${direct.length})\n\n` +
+            full.map(h => `**Matched on:** ${h.reasons.join("; ")}\n${summarizeNodes([h.node])}`)
+                .join("\n\n---\n\n") +
+            (rest.length
+              ? `\n\n### Also directly affected (${rest.length}, summarized)\n\n${digestNodes(rest)}`
+              : "")
+          );
+        }
+
+        if (transitive.length) {
+          const shown = transitive.slice(0, RADIUS_DIGEST_LIMIT);
+          sections.push(
+            `## In the blast radius (${transitive.length}, not edited directly)\n\n` +
+            `Anchored to code that depends on — or is depended on by — what you are editing. ` +
+            `Summarized; call \`simplegraph_get_node <ID>\` for a full record.\n\n` +
+            digestNodes(shown) +
+            overflow(shown.length, transitive.length, "blast-radius node(s)")
+          );
+        }
 
         return ok(
-          `⚠ Found ${hits.length} node(s) referencing these files` +
+          `⚠ Found ${hits.length} node(s)` +
           (high.length ? ` (${high.length} HIGH priority)` : "") +
-          `:\n\n${summarizeNodes(sorted)}`
+          `:\n\n${sections.join("\n\n")}`
         );
       }
 
@@ -862,7 +1146,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const { query } = args as { query: string };
         const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
         const hits = getAllNodes().filter(n => {
-          const haystack = [n.id, n.label, n.summary, ...n.tags, ...n.files, ...n.edges].join(" ").toLowerCase();
+          const haystack = [
+            n.id, n.label, n.summary,
+            ...n.tags, ...n.files, ...n.symbols, ...n.paths, ...n.edges,
+          ].join(" ").toLowerCase();
           return terms.every(t => haystack.includes(t));
         });
         if (!hits.length) return ok(`No nodes found matching "${query}".`);
@@ -872,14 +1159,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "simplegraph_add_node": {
         const {
           type, id, label, summary, priority,
-          tags, files, edges, regressedNTimes, root_cause, author, session,
+          tags, files, symbols, paths, edges, regressedNTimes, root_cause, author, session,
         } = args as {
           type: string; id: string; label: string; summary: string;
-          priority: string; tags?: string[]; files?: string[]; edges?: string[];
+          priority: string; tags?: string[]; files?: string[];
+          symbols?: string[]; paths?: string[]; edges?: string[];
           regressedNTimes?: number; root_cause?: string; author?: string; session?: string;
         };
         return handleAddNode(
-          { type, id, label, summary, priority, tags, files, edges, regressedNTimes, root_cause, author, session },
+          { type, id, label, summary, priority, tags, files, symbols, paths, edges, regressedNTimes, root_cause, author, session },
           GRAPH_ROOT,
           SHARED_ROOT
         );
@@ -945,7 +1233,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           const archiveBlock = formatNode({
             id: node.id, type: node.type, priority: node.priority,
             label: node.label, summary: updatedSummary, tags: node.tags,
-            files: node.files, edges: node.edges,
+            files: node.files, symbols: node.symbols, paths: node.paths,
+            edges: node.edges,
             lastUpdated: today, regressedNTimes: node.regressedNTimes,
             rootCause: node.rootCause, author: node.author, session: node.session,
           });
@@ -1012,7 +1301,7 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   process.stderr.write(
-    `simplegraph-mcp v0.4.0 ready\n` +
+    `simplegraph-mcp v${SERVER_VERSION} ready\n` +
     `  GRAPH_ROOT:  ${GRAPH_ROOT}\n` +
     (SHARED_ROOT ? `  SHARED_ROOT: ${SHARED_ROOT}\n` : "") +
     (DEFAULT_AUTHOR ? `  AUTHOR:      ${DEFAULT_AUTHOR}\n` : "") +
