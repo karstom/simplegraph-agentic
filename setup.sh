@@ -42,6 +42,46 @@ PYEOF
   fi
 }
 
+# Count real graph nodes, ignoring fenced code blocks and HTML comments.
+#
+# The shipped template carries commented-out example nodes, so a raw
+# `grep -c '^## NODE:'` reported a pristine install as "7 node(s)" — and that
+# number is what the upgrade prompt shows immediately above a destructive
+# "wipe all graph data" option. Users were being asked to protect data they did
+# not have, while a genuinely populated graph counted its examples too.
+#
+# Kept in sync with the awk in consistency_check.sh / stale_check.sh, which is
+# the authority on what counts as a node. Duplicated rather than sourced because
+# setup.sh must run standalone, before anything is installed.
+count_nodes() {
+  find "$1" -name '*.md' -not -name 'auto_map.md' -not -name '.scratchpad.md' 2>/dev/null \
+    | sort | while IFS= read -r f; do
+        awk '
+          /^[[:space:]]*(```|~~~)/ { fence = !fence; next }
+          fence { next }
+          {
+            line = $0
+            while (1) {
+              if (incomment) {
+                i = index(line, "-->")
+                if (i == 0) { line = ""; break }
+                line = substr(line, i + 3); incomment = 0
+              } else {
+                i = index(line, "<!--")
+                if (i == 0) break
+                head = substr(line, 1, i - 1)
+                rest = substr(line, i + 4)
+                e = index(rest, "-->")
+                if (e == 0) { line = head; incomment = 1; break }
+                line = head substr(rest, e + 3)
+              }
+            }
+            print line
+          }
+        ' "$f"
+      done | grep -cE '^## NODE: [A-Z][A-Z0-9_]*' || true
+}
+
 echo ""
 echo "${bold}simplegraph-agentic setup${reset}"
 echo "────────────────────────────────────"
@@ -52,8 +92,12 @@ echo ""
 UPGRADE_MODE=false
 
 if [ -d "${TARGET}/core" ] && [ -f "${TARGET}/core/graph_index.md" ]; then
-  NODE_COUNT=$(grep -rl "^## NODE:" "${TARGET}/core/" 2>/dev/null | xargs grep -h "^## NODE:" 2>/dev/null | wc -l | tr -d ' ')
-  warn "Existing graph detected at ${TARGET}/core/ (${NODE_COUNT} node(s))."
+  NODE_COUNT=$(count_nodes "${TARGET}/core" | tr -d ' ')
+  if [ "${NODE_COUNT}" = "0" ]; then
+    warn "Existing install detected at ${TARGET}/core/ — no graph data yet (0 nodes)."
+  else
+    warn "Existing graph detected at ${TARGET}/core/ (${NODE_COUNT} node(s))."
+  fi
   echo ""
   echo "${bold}What would you like to do?${reset}"
   echo "  1) Upgrade in place  — keep your graph data, refresh scripts and adapters"

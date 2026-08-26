@@ -5,6 +5,24 @@
 # Usage:
 #   bash core/scripts/auto_map.sh [PROJECT_DIR]
 #   bash core/scripts/auto_map.sh --public-only [PROJECT_DIR]
+#   bash core/scripts/auto_map.sh --include worktrees        # map a dir excluded by default
+#   bash core/scripts/auto_map.sh --exclude fixtures         # skip an extra dir
+#
+# Exclusions:
+#   Defaults skip dependency, build, and duplicate-checkout directories.
+#   Agent worktrees (.claude/, worktrees/) are skipped because they are complete
+#   second copies of the source: they double the map and keep deleted symbols
+#   visible, which hides the drift stale_check.sh looks for. If your project has
+#   real source in a directory of that name, un-skip it with --include.
+#
+#     --exclude DIR        add DIR to the skip list (repeatable)
+#     --include DIR        remove DIR from the skip list (repeatable)
+#     SIMPLEGRAPH_EXCLUDE_DIRS      comma-separated list; REPLACES the defaults
+#     SIMPLEGRAPH_EXCLUDE_PATTERNS  space-separated globs; REPLACES the defaults
+#
+#   Flags apply on top of whichever list is in effect, so
+#   `SIMPLEGRAPH_EXCLUDE_DIRS=node_modules,.git ./auto_map.sh --exclude tmp`
+#   skips exactly those three.
 #
 # Output: core/auto_map.md (gitignored — generated artifact)
 #
@@ -17,15 +35,40 @@ set -euo pipefail
 # ── parse args ────────────────────────────────────────────────────────────────
 PUBLIC_ONLY=false
 PROJECT_DIR=""
+ADD_EXCLUDES=""
+DROP_EXCLUDES=""
 
-for arg in "$@"; do
-  case "$arg" in
-    --public-only) PUBLIC_ONLY=true ;;
-    *) PROJECT_DIR="$arg" ;;
+usage() {
+  sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'
+  exit "${1:-0}"
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --public-only) PUBLIC_ONLY=true; shift ;;
+    --exclude)
+      [ $# -ge 2 ] || { echo "ERROR: --exclude needs a directory name" >&2; exit 2; }
+      ADD_EXCLUDES="${ADD_EXCLUDES}${ADD_EXCLUDES:+,}$2"; shift 2 ;;
+    --include)
+      [ $# -ge 2 ] || { echo "ERROR: --include needs a directory name" >&2; exit 2; }
+      DROP_EXCLUDES="${DROP_EXCLUDES}${DROP_EXCLUDES:+,}$2"; shift 2 ;;
+    -h|--help) usage 0 ;;
+    -*) echo "ERROR: unknown option: $1" >&2; usage 2 ;;
+    *) PROJECT_DIR="$1"; shift ;;
   esac
 done
 
 PROJECT_DIR="${PROJECT_DIR:-$(pwd)}"
+# Resolve to an absolute path. With a relative PROJECT_DIR of ".", the prefix
+# strip below turned ".claude/x/y.ts" into "laude/x/y.ts" — every hidden-directory
+# path in the map came out corrupted, and the entry could never be matched back
+# to a real file.
+if [ -d "${PROJECT_DIR}" ]; then
+  PROJECT_DIR="$(cd "${PROJECT_DIR}" && pwd)"
+else
+  echo "ERROR: project directory not found: ${PROJECT_DIR}" >&2
+  exit 1
+fi
 
 # Auto-detect graph directory or accept --output
 if [ -d "${PROJECT_DIR}/core" ]; then
@@ -46,8 +89,32 @@ if ! command -v ctags &>/dev/null; then
 fi
 
 # ── configure exclusions ──────────────────────────────────────────────────────
-EXCLUDE_DIRS="node_modules,.git,dist,build,.next,__pycache__,venv,.venv,vendor,target,core,shared,.cache"
-EXCLUDE_PATTERNS="*.parquet *.log *.trace *.json.lock"
+# .claude/.worktrees hold complete duplicate checkouts: indexing them doubles the
+# map and, worse, keeps a deleted symbol visible via the stale copy — which would
+# hide exactly the drift stale_check.sh looks for. Override with --include if a
+# directory of that name holds real source in your project.
+DEFAULT_EXCLUDE_DIRS="node_modules,.git,dist,build,.next,__pycache__,venv,.venv,vendor,target,core,shared,.cache,.claude,worktrees,.worktrees"
+DEFAULT_EXCLUDE_PATTERNS="*.parquet *.log *.trace *.json.lock"
+
+EXCLUDE_DIRS="${SIMPLEGRAPH_EXCLUDE_DIRS:-$DEFAULT_EXCLUDE_DIRS}"
+EXCLUDE_PATTERNS="${SIMPLEGRAPH_EXCLUDE_PATTERNS:-$DEFAULT_EXCLUDE_PATTERNS}"
+
+# --exclude appends; --include removes. Applied after the env override so the
+# flags always win, and exact-match only so --include core cannot also drop
+# .cache.
+[ -n "${ADD_EXCLUDES}" ] && EXCLUDE_DIRS="${EXCLUDE_DIRS},${ADD_EXCLUDES}"
+if [ -n "${DROP_EXCLUDES}" ]; then
+  KEPT=""
+  IFS=',' read -ra _cur <<< "${EXCLUDE_DIRS}"
+  for d in "${_cur[@]}"; do
+    [ -n "$d" ] || continue
+    drop=false
+    IFS=',' read -ra _drop <<< "${DROP_EXCLUDES}"
+    for x in "${_drop[@]}"; do [ "$d" = "$x" ] && drop=true && break; done
+    [ "$drop" = true ] || KEPT="${KEPT}${KEPT:+,}$d"
+  done
+  EXCLUDE_DIRS="${KEPT}"
+fi
 
 # ── generate tags ─────────────────────────────────────────────────────────────
 # Use a tempfile path but DELETE it before writing — ctags refuses to overwrite
@@ -125,7 +192,9 @@ with open('${TAGS_FILE}') as f:
 by_dir = defaultdict(lambda: defaultdict(list))
 for tag in tags:
     path = tag.get('path', '')
-    if path.startswith(project_dir):
+    # Match on a separator boundary so a sibling that merely shares the prefix
+    # (project '/a/b' vs path '/a/bc/d.ts') is never truncated.
+    if path.startswith(project_dir + os.sep):
         path = path[len(project_dir)+1:]
     dirname = os.path.dirname(path) or '.'
     basename = os.path.basename(path)
