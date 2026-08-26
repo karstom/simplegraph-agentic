@@ -29,10 +29,17 @@ curl -fsSL https://raw.githubusercontent.com/karstom/simplegraph-agentic/main/in
 
 ### Cross-platform
 
-Developed and verified on **WSL2 (Ubuntu)**, including projects living on a
-Windows drive under `/mnt/c`. macOS support is written against its documented
-constraints but has not been run there — `bash scripts/test_adapters.sh` is the
-check to run if you have a Mac.
+Verified on **WSL2 (Ubuntu)** — including projects on a Windows drive under
+`/mnt/c` — and on a separate **Ubuntu 24.04 VM** (kernel 6.8, bash 5.2, git
+2.43, Node 18.19, Universal Ctags 6.1, no npm). macOS support is written
+against its documented constraints but has not been run there;
+`bash scripts/test_adapters.sh` is the check if you have a Mac.
+
+On the Ubuntu VM, from a clean clone: 42/42 adapter tests, 12/12 gate tests,
+one-line install, exclusion flags, and symbol staleness all pass. Two paths
+that had only been reasoned about were exercised for real — **Node present but
+npm absent** (the MCP build is skipped and no `.mcp.json` is written, rather
+than failing the install), and **Node at exactly the v18 minimum**.
 
 Verified on WSL with the project on `/mnt/c`:
 
