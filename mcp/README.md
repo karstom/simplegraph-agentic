@@ -22,7 +22,7 @@ Use both: keep the skill/CLAUDE.md as a session-start summary and use MCP for mi
 |---|---|---|
 | `simplegraph_index` | Session start | Returns graph_index.md — routing table and quick index |
 | `simplegraph_nodes` | When routing table points to a category | Returns all nodes for regressions / invariants / decisions / watchlists / anti_patterns / components |
-| `simplegraph_check_files` | **Before editing any file** | Returns regressions, watchlists, invariants that reference those files |
+| `simplegraph_check_files` | **Before editing any file** | Returns regressions, watchlists, invariants anchored to the code you're touching — and, if you supply a blast radius, to the code around it. See [Working on top of a code graph](#working-on-top-of-a-code-graph) |
 | `simplegraph_anti_patterns` | Before generating code | Returns the anti-patterns list |
 | `simplegraph_search` | When looking for context by keyword | Searches IDs, labels, summaries, edges, file references |
 | `simplegraph_add_node` | After fixing a bug / making a decision | Appends a new node (optionally stamped with `author`/`session`) and regenerates the Quick Index |
@@ -268,17 +268,74 @@ If your team uses a `shared/` graph (see simplegraph's multi-repo feature), add
 | `SIMPLEGRAPH_SHARED` | _(none)_ | Optional: path to shared team graph `core/` — merged into all read operations |
 | `SIMPLEGRAPH_AUTHOR` | _(none)_ | Optional: default `Author` stamped on nodes this server creates (agent/tool name). Per-call `author` argument overrides it. |
 | `SIMPLEGRAPH_SESSION` | _(none)_ | Optional: default `Session` stamped on nodes this server creates. Per-call `session` argument overrides it. |
+| `SIMPLEGRAPH_CHECK_DETAIL_LIMIT` | `5` | `check_files`: how many direct hits get a full record. The rest are summarized, never hidden. `0` = summarize all. |
+| `SIMPLEGRAPH_CHECK_DIGEST_LIMIT` | `20` | `check_files`: how many blast-radius nodes to list. Beyond this, a count is reported. |
+| `SIMPLEGRAPH_CHECK_DIGEST_CHARS` | `180` | `check_files`: summary length in a digest entry. |
+| `SIMPLEGRAPH_EDGE_PREVIEW` | `6` | Edges shown inline before `_(+N more)_`, in every tool that summarizes nodes. |
+
+The four budget values above are tuned against a 251-node production graph. Raise
+them on a small graph where full records are affordable; lower them if many nodes
+match a single edit. A malformed value falls back to the default rather than
+collapsing to zero and suppressing output.
 
 ## Example agent workflow
 
 With MCP configured, a well-tuned agent will:
 
 1. Call `simplegraph_index` → get the routing table
-2. Call `simplegraph_check_files(["DuckDBProvider.ts"])` → get 8 relevant nodes before touching the file
+2. Call `simplegraph_check_files({files: ["DuckDBProvider.ts"]})` → get 8 relevant nodes before touching the file
+   (better: ask your code graph for the callers first and pass them as `related_files`)
 3. Call `simplegraph_nodes("regressions")` → read active regression details
 4. Make the code change
 5. Call `simplegraph_add_node(...)` → record the fix (the Quick Index is regenerated automatically — no separate index call needed)
 6. Call `simplegraph_update_node({id:"REG_X", field:"REGRESSED_N_TIMES", value:"increment"})` if it recurred
+
+## Working on top of a code graph
+
+This server stores **judgment** — what regressed, what's forbidden, why the code is
+the way it is. It does not parse your source, and it will not try to: computing a
+call graph is what structural code-graph tools already do well.
+
+The two compose. A structural graph can tell you that fifteen files are affected by
+your edit. It has nothing to say about *which one of them has regressed three times*.
+
+`simplegraph_check_files` takes four lists so you can hand it the answer:
+
+| Argument | Meaning |
+|---|---|
+| `files` | Files you are editing |
+| `symbols` | Symbols you are editing — qualified (`AuthService.refreshToken`) or bare (`refreshToken`) |
+| `related_files` | Files that call, depend on, or test what you're editing |
+| `related_symbols` | Callers and dependents of the symbols you're editing |
+
+The first two are direct hits; the last two are the blast radius. Fill the radius
+from whatever structural tool you already have — codebase-memory-mcp,
+code-review-graph, Graphify, an LSP, or `grep -r <symbol>`:
+
+```jsonc
+{
+  "files":           ["src/auth/parse.ts"],
+  "symbols":         ["parseToken"],
+  "related_files":   ["src/auth/service.ts", "src/auth/session.ts"],
+  "related_symbols": ["AuthService.refreshToken"]
+}
+```
+
+Results come back grouped — **Directly affected** first, then **In the blast radius
+(not edited directly)** — with a `Matched on:` line explaining why each node fired,
+so a widened radius adds context without burying the file you're actually editing.
+
+The response is budgeted. Full records go to the top-ranked direct hits; everything
+else is digested to one line plus a clipped summary, and long inline edge lists are
+capped. Nothing on the direct path is ever hidden — past the detail limit it is
+summarized, not dropped. Expand any digest with `simplegraph_get_node <ID>`, and
+tune the budget with the `SIMPLEGRAPH_CHECK_*` environment variables below.
+
+Nodes participate by anchoring to `**Files:**`, `**Symbols:**`, and (for Components)
+`**Paths:**`. A symbol anchor keeps a node matchable after its file is renamed; a
+`Paths` anchor lets a Component claim a directory, so it fires for files that did not
+exist when the node was written. All three are optional — an unanchored graph behaves
+exactly as before.
 
 ## Multi-agent development
 

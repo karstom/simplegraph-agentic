@@ -84,6 +84,68 @@ These are optional. `simplegraph_add_node` stamps them from its `author`/`sessio
 arguments, or from the `SIMPLEGRAPH_AUTHOR` / `SIMPLEGRAPH_SESSION` environment
 variables. Omit them for solo work.
 
+### Anchors — Files, Symbols, Paths
+
+A node's anchors decide when it fires. `simplegraph_check_files` matches on all
+three, so pick the ones that describe what the node is really about.
+
+| Field | Matching | Use for |
+|---|---|---|
+| `**Files:**` | Path suffix — `token.ts` matches `src/auth/token.ts` | The specific files the node is about |
+| `**Symbols:**` | Symbol name, qualified or bare — `AuthService.refreshToken` matches `refreshToken` | The function/class/method the node is really about |
+| `**Paths:**` | Directory containment — `src/auth` matches everything beneath it | Component ownership of a whole area |
+
+```markdown
+**Files:** `src/auth/token.ts`
+**Symbols:** `AuthService.refreshToken`, `parseToken`
+**Paths:** `src/auth`
+```
+
+All three are optional and all three are lists of backtick-wrapped entries.
+Backticks are the documented form and what the tools emit, but a plain
+comma-separated list is also accepted — hand-written nodes routinely omit them,
+and those are the nodes most worth keeping.
+
+**Why anchor to symbols as well as files.** A path-only anchor breaks silently the
+moment the file is renamed — the node still looks alive but no longer guards
+anything. A symbol survives the move. It also lets the node fire when a *caller*
+is edited, which is usually where the bug is actually reintroduced.
+
+**Why `Paths` is only for Components.** Directory ownership is coarse by design.
+On a Regression it would fire on every unrelated edit in the area and train the
+agent to ignore the tool. On a Component — "this node owns `src/auth`" — it is
+exactly right, and it does not churn when files move around inside.
+
+Adding anchors to nodes that predate these fields needs no rewrite:
+`simplegraph_update_node` with `field: "Symbols"` inserts the field if it is
+missing. Pass the value with each entry in backticks:
+`` value: "`AuthService.refreshToken`, `parseToken`" ``.
+
+`scripts/stale_check.sh` verifies both: it reports `Paths` that are no longer
+directories, and `Symbols` that are absent from `auto_map.md` (skipped entirely
+when no `auto_map.md` has been generated).
+
+### Working with a structural code graph
+
+simplegraph does not parse your source. If you also run a structural code graph —
+codebase-memory-mcp, code-review-graph, Graphify, an LSP, or plain
+`grep -r <symbol>` — use it **first** to find what your edit touches, then pass
+that blast radius to `simplegraph_check_files`:
+
+```
+simplegraph_check_files({
+  files:           ["src/auth/parse.ts"],       // what you are editing
+  symbols:         ["parseToken"],
+  related_files:   ["src/auth/service.ts"],     // its callers and dependents
+  related_symbols: ["AuthService.refreshToken"] // from the code graph
+})
+```
+
+Results come back in two groups — *directly affected* first, then *in the blast
+radius*. That second group is the one a structural graph alone cannot give you:
+it knows those files are affected, but not that one of them has regressed three
+times.
+
 ### Tags
 
 Tags enable similarity-style search across nodes that don't share explicit edge relationships. Use `simplegraph_search` with a tag name to find all semantically related nodes across the graph.

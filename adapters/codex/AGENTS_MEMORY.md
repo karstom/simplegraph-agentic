@@ -22,9 +22,16 @@ your current task — do not load the full graph.
 
 ### Before Editing Any File
 
-Call `simplegraph_check_files(["path/to/file"])` before modifying code. It returns all
-known regressions, watchlists, and invariants that reference those files. Any node with
-`REGRESSED_N_TIMES >= 2` is high-risk — proceed with extra care.
+Call `simplegraph_check_files({files: ["path/to/file"]})` before modifying code. It
+returns all known regressions, watchlists, and invariants anchored to that code. Any node
+with `REGRESSED_N_TIMES >= 2` is high-risk — proceed with extra care.
+
+**Expand the blast radius first.** A regression is often recorded against the *caller*,
+not the line you are changing. Before calling `simplegraph_check_files`, use whatever
+structural tool you have — a code-graph MCP server, an LSP, or `grep -r <symbol>` — to
+find the callers, dependents, and tests your edit affects, then pass them as
+`related_files` / `related_symbols` alongside the `files` and `symbols` you are editing.
+Nodes reached that way are reported in a separate "blast radius" group.
 
 Without MCP: follow the `VIOLATED_BY` and `WATCHLIST` edge links in the loaded graph
 nodes manually before editing.
