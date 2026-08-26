@@ -13,7 +13,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import * as readline from "readline";
-import { buildContext } from "./mine.js";
+import { buildContext, DEFAULT_COMPONENT_DENYLIST } from "./mine.js";
 import { assembleBundle } from "./bundle.js";
 import { mergeBundle, readState, DRAFT_FILE } from "./merge.js";
 import { regenerateIndex } from "../reindex.js";
@@ -36,6 +36,10 @@ Options:
   --types <list>         comma-separated node types to seed (default: all)
                          (Component,Invariant,Regression,Decision,Watchlist)
   --max-per-type <n>     cap nodes per type (default ${DEFAULT_MAX_PER_TYPE})
+  --skip-component <dir> never mint a Component for this top-level directory
+                         (repeatable; adds to the defaults)
+  --keep-component <dir> mint one even though it is skipped by default
+                         (repeatable; e.g. --keep-component docs)
   --graph <path>         graph root directory (default: PATH/core)
   --output <path>        write the draft bundle here (default: <graph>/${DRAFT_FILE})
   --yes                  skip the interactive confirm
@@ -64,6 +68,8 @@ export function parseArgs(argv: string[]): SeedOptions & { help: boolean; graphE
     types: NODE_TYPES,
     output: undefined as string | undefined,
     maxCommits: DEFAULT_MAX_COMMITS,
+    skipComponents: [] as string[],
+    keepComponents: [] as string[],
     help: false,
     graphExplicit: false,
   };
@@ -82,6 +88,8 @@ export function parseArgs(argv: string[]): SeedOptions & { help: boolean; graphE
       case "--max-commits": opts.maxCommits = parseInt(next(a), 10); break;
       case "--min-confidence": opts.minConfidence = parseFloat(next(a)); break;
       case "--max-per-type": opts.maxPerType = parseInt(next(a), 10); break;
+      case "--skip-component": opts.skipComponents.push(next(a).toLowerCase()); break;
+      case "--keep-component": opts.keepComponents.push(next(a).toLowerCase()); break;
       case "--types": opts.types = parseTypes(next(a)); break;
       case "--graph": opts.graphRoot = path.resolve(next(a)); opts.graphExplicit = true; break;
       case "--output": opts.output = path.resolve(next(a)); break;
@@ -203,7 +211,15 @@ export async function runSeed(argv: string[]): Promise<number> {
     return 0;
   }
 
-  const ctx = buildContext(opts.repoPath, { since: opts.since, maxCommits: opts.maxCommits });
+  const ctx = buildContext(opts.repoPath, {
+    since: opts.since,
+    maxCommits: opts.maxCommits,
+    // --keep-component wins over the defaults, over --skip-component, and over
+    // the dot-directory rule, so a project that really does treat docs/ (or
+    // .platform/) as a module can say so.
+    componentDenylist: [...DEFAULT_COMPONENT_DENYLIST, ...(opts.skipComponents ?? [])],
+    componentKeeplist: opts.keepComponents ?? [],
+  });
 
   let bundle = assembleBundle(ctx, opts);
 
