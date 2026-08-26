@@ -91,7 +91,13 @@ fi
 
 TASK_FILES=("${CORE_DIR}/graph_index.md")
 [ -f "${CORE_DIR}/invariants.md" ] && TASK_FILES+=("${CORE_DIR}/invariants.md")
-TASK_FILES+=("${COMPONENTS[@]}")
+# bash 3.2 — which is what macOS ships as /bin/bash — treats "${arr[@]}" on an
+# EMPTY array as an unbound variable under `set -u` and aborts. bash 4.4+ does
+# not, so this only ever fails on a Mac, and only for a graph with no component
+# files. Guard on the count, which is always safe.
+if [ "${#COMPONENTS[@]}" -gt 0 ]; then
+  TASK_FILES+=("${COMPONENTS[@]}")
+fi
 
 TASK_WORDS=$(count_tokens "${TASK_FILES[@]}")
 TASK_TOKENS=$(fmt_tokens "$TASK_WORDS")

@@ -120,11 +120,14 @@ EXCLUDE_PATTERNS="${SIMPLEGRAPH_EXCLUDE_PATTERNS:-$DEFAULT_EXCLUDE_PATTERNS}"
 if [ -n "${DROP_EXCLUDES}" ]; then
   KEPT=""
   IFS=',' read -ra _cur <<< "${EXCLUDE_DIRS}"
-  for d in "${_cur[@]}"; do
+  # ${arr[@]+"${arr[@]}"} is the portable empty-array guard: bash 3.2 (macOS)
+  # aborts on a bare "${arr[@]}" under `set -u` when the array is empty, which
+  # is reachable here by --include'ing every default.
+  for d in ${_cur[@]+"${_cur[@]}"}; do
     [ -n "$d" ] || continue
     drop=false
     IFS=',' read -ra _drop <<< "${DROP_EXCLUDES}"
-    for x in "${_drop[@]}"; do [ "$d" = "$x" ] && drop=true && break; done
+    for x in ${_drop[@]+"${_drop[@]}"}; do [ "$d" = "$x" ] && drop=true && break; done
     [ "$drop" = true ] || KEPT="${KEPT}${KEPT:+,}$d"
   done
   EXCLUDE_DIRS="${KEPT}"
@@ -147,7 +150,7 @@ CTAGS_OPTS=(
 
 # Add directory exclusions
 IFS=',' read -ra DIRS <<< "$EXCLUDE_DIRS"
-for dir in "${DIRS[@]}"; do
+for dir in ${DIRS[@]+"${DIRS[@]}"}; do
   CTAGS_OPTS+=(--exclude="${dir}")
 done
 
