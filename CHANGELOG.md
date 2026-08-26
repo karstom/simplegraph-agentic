@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Documentation
+
+- **`mcp/README.md` documented 9 of the server's 13 tools.** `get_node`,
+  `scratchpad`, `seed_candidates`, and `update_index` were missing entirely,
+  and the main README claimed "eleven tools". Both corrected, with a note that
+  only three matter day to day so the longer list does not read as more surface
+  than it is.
+- **Added a troubleshooting section**, covering the failure that has no visible
+  symptom: the agent simply never mentions the graph. That is nearly always one
+  of three things — the server is not connected, it is connected but pointed at
+  the wrong `GRAPH_ROOT`, or it is fine and the model is simply not choosing to
+  call it, which the adapter exists to fix. Also covers an empty graph, anchors
+  that do not match, oversized `check_files` output, and concurrent writers.
+
 ### Fixed
 
 - **A clean install contradicted itself.** `setup.sh` printed "Build the MCP

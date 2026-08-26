@@ -24,11 +24,19 @@ Use both: keep the skill/CLAUDE.md as a session-start summary and use MCP for mi
 | `simplegraph_nodes` | When routing table points to a category | Returns all nodes for regressions / invariants / decisions / watchlists / anti_patterns / components |
 | `simplegraph_check_files` | **Before editing any file** | Returns regressions, watchlists, invariants anchored to the code you're touching — and, if you supply a blast radius, to the code around it. See [Working on top of a code graph](#working-on-top-of-a-code-graph) |
 | `simplegraph_anti_patterns` | Before generating code | Returns the anti-patterns list |
-| `simplegraph_search` | When looking for context by keyword | Searches IDs, labels, summaries, edges, file references |
+| `simplegraph_search` | When looking for context by keyword | Searches IDs, labels, summaries, tags, edges, and file/symbol/path anchors |
+| `simplegraph_get_node` | When you know the exact ID | Returns one node's full raw record — use to expand a digest from `check_files` |
 | `simplegraph_add_node` | After fixing a bug / making a decision | Appends a new node (optionally stamped with `author`/`session`) and regenerates the Quick Index |
 | `simplegraph_update_node` | When a bug recurs | Increments `REGRESSED_N_TIMES`, auto-upgrades priority to HIGH at ≥2 |
 | `simplegraph_reindex` | After a git merge or manual edit | Rebuilds the Quick Index from the node files, deterministically |
 | `simplegraph_archive_regression` | When a bug is permanently fixed | Moves a Regression to the archive and refreshes the index |
+| `simplegraph_scratchpad` | Mid-session, for notes not yet worth a node | Read/append/clear `.scratchpad.md` (gitignored) |
+| `simplegraph_seed_candidates` | Bootstrapping, or when Decisions look thin | Returns commits whose message may record a *why*, for you to judge and write as Decision nodes |
+| `simplegraph_update_index` | Rarely — `add_node` already does it | Regenerates the Quick Index; prefer `simplegraph_reindex` |
+
+Thirteen tools, but only three matter day to day: **`check_files` before an
+edit**, **`anti_patterns` before generating code**, and **`add_node` after a
+fix**. The rest are there when you need them.
 
 Writes are safe under concurrent agents: every graph mutation is atomic
 (temp-file + rename) and read-modify-write tool calls hold a per-graph advisory
@@ -206,6 +214,61 @@ Add to `.zed/settings.json` in your project root (create it if it doesn't exist)
 > **Note:** Zed does not support workspace variable substitution in context server config, so absolute paths are required. For multi-project setups, each project needs its own `.zed/settings.json` with the correct `SIMPLEGRAPH_ROOT` path.
 
 > **Using Claude Code CLI?** See the Claude Code CLI section above — it uses `.mcp.json`, not `.zed/settings.json`. This Zed config is for Zed's native AI assistant panel only.
+
+## Troubleshooting
+
+Almost every problem here is one of three things, and they look identical from
+the outside — the agent simply never mentions the graph.
+
+**1. The server is not connected.** Check your client's MCP panel or logs
+first; nothing below matters until it lists `simplegraph`. Start the server by
+hand to see what it says:
+
+```bash
+SIMPLEGRAPH_ROOT=/abs/path/to/your/project/core node /path/to/mcp/dist/index.js
+```
+
+It should print `simplegraph-mcp vX.Y.Z ready` and the resolved `GRAPH_ROOT`,
+then sit waiting on stdin — that is correct behaviour for a stdio server, not a
+hang. Ctrl-C to exit. Common causes: `dist/` was never built
+(`cd mcp && npm install && npm run build`), or the path in your config points
+somewhere that no longer exists.
+
+**2. It is connected but pointed at the wrong graph.** The startup banner prints
+`GRAPH_ROOT`. If that is not your project's `core/`, fix `SIMPLEGRAPH_ROOT` in
+the config. A server pointed at an empty or missing directory answers every
+query with "no nodes found" and looks broken rather than misconfigured.
+
+**3. It is connected and correct, but the agent never calls it.** This is the
+most common one, and it is not a bug. MCP tools are *offered*, not forced — the
+model decides. Two things fix it:
+
+- **Install the adapter too.** The adapter (`CLAUDE.md`, `.cursor/rules/…`)
+  tells the agent *when* to call these tools. Without it the tools exist but
+  nothing instructs the agent to reach for them before an edit. See
+  [Recommended: use both](#recommended-use-both-mcp-and-the-adapter).
+- **Ask directly, once.** "Check the memory graph before editing this" reliably
+  triggers a call, and confirms end to end that the wiring works.
+
+**The graph is empty.** A fresh install has no nodes, so every lookup correctly
+returns nothing. Seed it — `sg seed --dry-run` mines your git history offline.
+See [seeding](../docs/seeding.md).
+
+**`check_files` returns nothing for a file you know is in the graph.** The node
+may anchor a *different* path spelling. Anchors match by path suffix, so
+`token.ts` matches `src/auth/token.ts`, but two different files named
+`index.ts` both match a bare `index.ts`. Confirm with
+`simplegraph_search <filename>`, and prefer anchoring nodes to a symbol as well
+as a path.
+
+**`check_files` returns a wall of output.** Its response is budgeted, but the
+budget is tunable — see the `SIMPLEGRAPH_CHECK_*` variables under
+[Environment variables](#environment-variables). Lower
+`SIMPLEGRAPH_CHECK_DETAIL_LIMIT` to summarize more aggressively.
+
+**Two agents are writing at once.** That is supported: writes are atomic and
+read-modify-write calls hold a per-graph lock. See
+[Multi-agent development](#multi-agent-development).
 
 ## Multi-project setup
 

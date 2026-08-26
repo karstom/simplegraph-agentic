@@ -114,7 +114,7 @@ Three hops tell it what is fragile here and why.
 | Codex CLI | `AGENTS.md` + `.codex/config.toml` |
 | Anything else | Generic adapter for custom instructions |
 
-The installer picks the right one automatically. With the MCP server, the agent gets eleven tools — the important ones being `simplegraph_check_files` before an edit, `simplegraph_anti_patterns` before generating code, and `simplegraph_add_node` after a fix. See [`mcp/README.md`](mcp/README.md).
+The installer picks the right one automatically. With the MCP server, the agent gets thirteen tools — the three that matter day to day being `simplegraph_check_files` before an edit, `simplegraph_anti_patterns` before generating code, and `simplegraph_add_node` after a fix. See [`mcp/README.md`](mcp/README.md).
 
 ---
 
