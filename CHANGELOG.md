@@ -29,7 +29,22 @@ curl -fsSL https://raw.githubusercontent.com/karstom/simplegraph-agentic/main/in
 
 ### Cross-platform
 
-Verified on Linux; written against the constraints of macOS and WSL.
+Developed and verified on **WSL2 (Ubuntu)**, including projects living on a
+Windows drive under `/mnt/c`. macOS support is written against its documented
+constraints but has not been run there — `bash scripts/test_adapters.sh` is the
+check to run if you have a Mac.
+
+Verified on WSL with the project on `/mnt/c`:
+
+- The installer detects WSL from `/proc/version` and warns about CRLF when the
+  project is on a Windows drive.
+- Scripts execute from `drvfs`, which mounts without the `metadata` option, so
+  Linux permission bits are absent and everything reads as `0777`.
+- The graph's atomic writes (temp file + rename) and its cross-process advisory
+  lock behave correctly on 9p/drvfs: eight concurrent `REGRESSED_N_TIMES`
+  increments advanced the counter 1 → 9 with no lost updates, no torn file, and
+  no stray temp or lock files. That is the multi-agent safety guarantee holding
+  on a filesystem it had never been tested against.
 
 - **bash 3.2 compatible** — no `mapfile`, associative arrays, or `${var,,}`,
   because that is what macOS ships as `/bin/bash`.
@@ -37,9 +52,11 @@ Verified on Linux; written against the constraints of macOS and WSL.
   BSD/Xcode `ctags` that satisfies `command -v` but cannot emit JSON tags; it
   failed into `|| true` and the run ended with "No symbols found", which reads
   as "your project has no code" rather than "this is the wrong ctags".
-- **Root `.gitattributes` pins `eol=lf`.** A clone made by Git for Windows with
-  `core.autocrlf=true`, opened under WSL, fails on every script with a bare
-  `\r: command not found` — the shebang itself ends in `\r`.
+- **Root `.gitattributes` pins `eol=lf`.** Confirmed both halves on WSL: a
+  CRLF copy of `setup.sh` fails with exactly `$'\r': command not found`
+  followed by `set: pipefail: invalid option name`, and a fresh
+  `git clone -c core.autocrlf=true` of this branch onto `/mnt/c` now checks out
+  LF regardless, because `.gitattributes` overrides the client setting.
 
 ### Documentation
 
