@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **A clean install contradicted itself.** `setup.sh` printed "Build the MCP
+  server first" unconditionally, so the one-line installer reported
+  "✓ MCP server built" and was answered, one line later, by an instruction to
+  go build it — on the primary install path, to a first-time user, about a file
+  sitting right there. The warning now fires only when the server is genuinely
+  absent, and confirms the resolved path when it is not.
+
 ## [0.6.0] — 2026-08-26
 
 ### Fixed

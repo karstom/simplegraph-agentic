@@ -443,7 +443,16 @@ EOF
 EOF
         ok "Claude Code settings written → .claude/settings.json"
       fi
-      warn "Build the MCP server first: cd ${SCRIPT_DIR}/mcp && npm install && npm run build"
+      # Only nag when the server is genuinely missing. This warning used to be
+      # unconditional, which made a clean one-line install contradict itself:
+      # install.sh prints "✓ MCP server built" and setup.sh immediately answered
+      # "Build the MCP server first" — on the primary install path, to a
+      # first-time user, about a file sitting right there.
+      if [ -f "${MCP_DIST}" ]; then
+        ok "MCP server ready → ${MCP_DIST}"
+      else
+        warn "Build the MCP server before use: cd ${SCRIPT_DIR}/mcp && npm install && npm run build"
+      fi
     fi
     ;;
   4)
@@ -512,7 +521,16 @@ EOF
 EOF
         ok "Zed context server config written → .zed/settings.json"
       fi
-      warn "Build the MCP server first: cd ${SCRIPT_DIR}/mcp && npm install && npm run build"
+      # Only nag when the server is genuinely missing. This warning used to be
+      # unconditional, which made a clean one-line install contradict itself:
+      # install.sh prints "✓ MCP server built" and setup.sh immediately answered
+      # "Build the MCP server first" — on the primary install path, to a
+      # first-time user, about a file sitting right there.
+      if [ -f "${MCP_DIST}" ]; then
+        ok "MCP server ready → ${MCP_DIST}"
+      else
+        warn "Build the MCP server before use: cd ${SCRIPT_DIR}/mcp && npm install && npm run build"
+      fi
       warn "Note: claude-acp and Claude Code in terminal use CLAUDE.md, not this config."
     fi
     ;;
@@ -567,7 +585,16 @@ env = { SIMPLEGRAPH_ROOT = "${CORE_PATH}" }
 EOF
         ok "MCP config written → .codex/config.toml"
       fi
-      warn "Build the MCP server first: cd ${SCRIPT_DIR}/mcp && npm install && npm run build"
+      # Only nag when the server is genuinely missing. This warning used to be
+      # unconditional, which made a clean one-line install contradict itself:
+      # install.sh prints "✓ MCP server built" and setup.sh immediately answered
+      # "Build the MCP server first" — on the primary install path, to a
+      # first-time user, about a file sitting right there.
+      if [ -f "${MCP_DIST}" ]; then
+        ok "MCP server ready → ${MCP_DIST}"
+      else
+        warn "Build the MCP server before use: cd ${SCRIPT_DIR}/mcp && npm install && npm run build"
+      fi
     fi
     ;;
   7)
