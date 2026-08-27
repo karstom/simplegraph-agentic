@@ -4,6 +4,16 @@
 
 ### Documentation
 
+- **Restored a comparison to the alternatives**, dropped in the README rewrite,
+  rebuilt on a claim that survives scrutiny. The old table asserted graphs beat
+  vector search generally, which invites an argument this project would lose on
+  the general case. The real advantage is narrower: `check_files` is an exact
+  join on the path and symbol the agent is *already* editing, so surfacing the
+  right node never depends on the agent thinking to ask. Semantic search needs
+  a query; this fires because a file was opened. Stated alongside where
+  simplegraph genuinely loses — recall is bounded by what someone wrote down,
+  and for open-ended "what is our approach to X?" questions, semantic search
+  over prose beats its literal keyword matching outright.
 - **`mcp/README.md` documented 9 of the server's 13 tools.** `get_node`,
   `scratchpad`, `seed_candidates`, and `update_index` were missing entirely,
   and the main README claimed "eleven tools". Both corrected, with a note that
