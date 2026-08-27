@@ -81,6 +81,39 @@ The gap widens as you learn more. Between two measurements this graph grew from 
 
 *(Estimated at 1.3 tokens/word — read them as ratios. `bash scripts/token_benchmark.sh` measures your own.)*
 
+### The bigger problem isn't cost — it's whether the right thing surfaces at all
+
+A flat file loaded in full doesn't *miss* anything, exactly. It's all in
+context. But one invariant is competing with 30,000 tokens of other content and
+the task itself. Chunk that file and search it instead, and recall becomes
+probabilistic — embedding similarity is not causal relevance, and a miss is
+silent.
+
+simplegraph sidesteps both, because the trigger isn't a query. `check_files` is
+an exact join on the path and symbol the agent is *already* editing.
+
+Concretely: an agent adds a logging call to `IdentityService.ts`. Semantic
+search on *"add logging to identity service"* will not surface a node about a
+badge that reappears after every deploy. A path key surfaces it unconditionally
+— sixth recurrence, root cause attached.
+
+**Semantic search needs the agent to think to ask. This fires because it opened
+a file.**
+
+| Approach | Where it breaks |
+|---|---|
+| **Flat `CLAUDE.md`** | Nothing is absent, but one line competes with everything else — and you pay for all of it on every request |
+| **Semantic search / vector DB** | Retrieval is probabilistic and a miss is silent; needs infrastructure to run |
+| **Code index** (LSP, code graph) | Knows what the code *is*, not what it has *done to you* — [compose with it](docs/code-graphs.md) instead |
+| **Fine-tuning** | Expensive, opaque, and stale the moment the code changes |
+
+Where it genuinely loses: recall is bounded by what someone bothered to write
+down, not by an algorithm — a vector DB over your docs at least contains
+everything anyone ever typed. And for open-ended *"what's our approach to X?"*
+questions, semantic search over prose beats simplegraph's keyword search
+outright. It is strongest at the narrow question it was built for: **what do I
+need to know before touching this file?**
+
 ---
 
 ## What makes it more than notes
