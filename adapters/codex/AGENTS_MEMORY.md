@@ -1,10 +1,4 @@
 <!-- simplegraph-memory-start -->
-# Memory Graph Instructions for Codex
-
-Add this section to your project's `AGENTS.md` to enable persistent memory graph support.
-
----
-
 ## Memory Graph
 
 This project uses a persistent memory graph to track regressions, invariants, decisions,

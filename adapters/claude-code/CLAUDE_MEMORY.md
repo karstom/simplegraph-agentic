@@ -1,10 +1,4 @@
 <!-- simplegraph-memory-start -->
-# Memory Graph Instructions for Claude Code
-
-Add this section to your project's `CLAUDE.md` to enable persistent memory graph support.
-
----
-
 ## Memory Graph
 
 This project uses a persistent memory graph to track regressions, invariants, decisions,
