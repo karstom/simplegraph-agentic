@@ -10,6 +10,8 @@
 #   --multi-repo    also install the shared/ org-level scaffold
 #   --mcp           answer yes to every "generate MCP config?" prompt
 #   --no-mcp        answer no to them
+#   --hook          answer yes to the "wire the documentation Stop hook?" prompt
+#   --no-hook       answer no to it
 #   --upgrade       on an existing install, upgrade in place (never destructive)
 #   --reinstall     on an existing install, wipe graph data first [DESTRUCTIVE]
 #   -y, --yes       accept the default answer to every remaining prompt
@@ -26,6 +28,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 TARGET=""
 PRESET_TOOL=""
 PRESET_MCP=""
+PRESET_HOOK=""
 PRESET_MULTIREPO=""
 PRESET_INSTALL_CHOICE=""
 ASSUME_YES=false
@@ -39,6 +42,8 @@ while [ $# -gt 0 ]; do
     --multi-repo) PRESET_MULTIREPO="y"; shift ;;
     --mcp)        PRESET_MCP="y"; shift ;;
     --no-mcp)     PRESET_MCP="n"; shift ;;
+    --hook)       PRESET_HOOK="y"; shift ;;
+    --no-hook)    PRESET_HOOK="n"; shift ;;
     --upgrade)    PRESET_INSTALL_CHOICE="1"; shift ;;
     --reinstall)  PRESET_INSTALL_CHOICE="2"; shift ;;
     -y|--yes)     ASSUME_YES=true; shift ;;
@@ -134,7 +139,10 @@ answer() {  # answer <varname> <default> [preset]
   elif read -r "${__var}"; then
     # Piped answer consumed; echo it so the transcript shows what was chosen.
     echo "${!__var}"
-  elif [ -r /dev/tty ]; then
+  elif { true < /dev/tty; } 2>/dev/null; then
+    # `-r /dev/tty` only checks permission bits — the node is world-readable even
+    # with no controlling terminal, so opening it then fails with ENXIO and spews
+    # a "No such device" error. Test that it actually opens before reading.
     read -r "${__var}" < /dev/tty || true
   else
     printf -v "${__var}" '%s' "${__default}"; echo "${__default} (no terminal)"
@@ -461,7 +469,7 @@ EOF
     echo "graph node when it edits a HIGH-priority file without one — the capture"
     echo "step CI can't enforce. It nudges once per task and fails open."
     ask "Wire this Stop hook into .claude/settings.json? [y/N]"
-    read -r hook_choice
+    answer hook_choice "N" "${PRESET_HOOK}"
     if [[ "${hook_choice}" =~ ^[Yy]$ ]]; then
       bash "${SCRIPT_DIR}/scripts/install_doc_hook.sh" "${TARGET}" \
         || warn "Could not wire the hook — see scripts/install_doc_hook.sh"

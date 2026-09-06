@@ -45,6 +45,17 @@
 
 ### Fixed
 
+- **The `curl | bash` installer ate its own adapter prompt.** Under the one-line
+  install, `install.sh` handed `setup.sh` its own stdin — which is the piped
+  installer script. `setup.sh`'s adapter prompt then `read` the next line of that
+  script as the answer (`Choice [1-8]: echo ""`) and skipped the adapter install
+  outright. `install.sh` now runs `setup.sh` with the real terminal (`/dev/tty`)
+  when there is one and `/dev/null` (prompts take defaults) when there isn't, so
+  the interactive menu works and a detected tool installs. Also hardened
+  `setup.sh`'s own `/dev/tty` fallback to test that the terminal actually *opens*
+  before reading — a world-readable `/dev/tty` with no controlling terminal was
+  printing "No such device" in CI — and routed the new documentation-hook prompt
+  through the same answer helper (adds `--hook` / `--no-hook`).
 - **A clean install contradicted itself.** `setup.sh` printed "Build the MCP
   server first" unconditionally, so the one-line installer reported
   "✓ MCP server built" and was answered, one line later, by an instruction to
