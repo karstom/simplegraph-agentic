@@ -18,6 +18,14 @@
   Claude Code setup); `scripts/test_require_documentation.sh` covers the behavior.
   This is the "force capture" companion to `consistency_check.sh`'s "force
   validity" — see `docs/maintenance.md`.
+- **A deterministic test framework and CI.** `scripts/test_all.sh` runs every
+  key-free suite in one command — the MCP unit tests plus a new stdio *contract*
+  test (`mcp/src/contract.test.ts`) that spawns the real server and drives it
+  over JSON-RPC, the shell gates, the adapter install matrix across all seven
+  tools, and the repo's own graph consistency. `.github/workflows/ci.yml` runs it
+  on ubuntu-latest and macos-latest — the repo now dogfoods the CI gate it
+  recommends, and the macOS runner actually exercises the bash 3.2 / BSD grep-sed
+  hardening the shell scripts claim. See `CONTRIBUTING.md`.
 
 ### Documentation
 
