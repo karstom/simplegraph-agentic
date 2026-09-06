@@ -222,7 +222,18 @@ fi
 
 # ── hand off to setup.sh ──────────────────────────────────────────────────────
 echo ""
-bash "${SG_HOME}/setup.sh" "${TARGET_DIR}" ${CLEAN_ARGS[@]+"${CLEAN_ARGS[@]}"}
+# setup.sh is interactive, but in the `curl | bash` path OUR stdin is the piped
+# installer script itself. Inheriting that pipe would let setup.sh's `read`
+# prompts consume leftover script text as answers (the classic curl|bash bug:
+# "Choice [1-8]: echo """). Hand setup.sh the real terminal when there is one,
+# and /dev/null — where every prompt cleanly takes its default — when there is
+# not (CI, no controlling tty). This also stops setup.sh from stealing bytes
+# this installer still needs to finish.
+if { true < /dev/tty; } 2>/dev/null; then
+  bash "${SG_HOME}/setup.sh" "${TARGET_DIR}" ${CLEAN_ARGS[@]+"${CLEAN_ARGS[@]}"} < /dev/tty
+else
+  bash "${SG_HOME}/setup.sh" "${TARGET_DIR}" ${CLEAN_ARGS[@]+"${CLEAN_ARGS[@]}"} < /dev/null
+fi
 
 echo ""
 echo "${bold}simplegraph is installed.${reset}"
