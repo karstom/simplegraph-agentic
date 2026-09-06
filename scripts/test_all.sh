@@ -36,6 +36,7 @@ step "MCP unit + contract tests"  mcp_suite
 step "consistency-check gate"     bash "${ROOT}/scripts/test_consistency_check.sh"
 step "documentation Stop hook"    bash "${ROOT}/scripts/test_require_documentation.sh"
 step "adapter install matrix"     bash "${ROOT}/scripts/test_adapters.sh"
+step "eval harness self-test"     bash "${ROOT}/scripts/eval/test_eval_harness.sh"
 step "repo graph consistency"     bash "${ROOT}/scripts/consistency_check.sh"
 
 echo ""

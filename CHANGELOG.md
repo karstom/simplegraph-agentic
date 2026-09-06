@@ -26,6 +26,17 @@
   on ubuntu-latest and macos-latest — the repo now dogfoods the CI gate it
   recommends, and the macOS runner actually exercises the bash 3.2 / BSD grep-sed
   hardening the shell scripts claim. See `CONTRIBUTING.md`.
+- **Opt-in live-harness evals + a server call log.** `scripts/eval/` drives the
+  CLI-scriptable agents (Claude Code headless, Codex CLI) against a throwaway
+  fixture — a planted bug in a repo with simplegraph installed and a HIGH-priority
+  Watchlist on the buggy file — and asserts the agent actually used the graph:
+  read it before editing, fixed the bug, recorded a node. That first signal is
+  made observable by a new opt-in `SIMPLEGRAPH_CALL_LOG` env var that appends
+  every tool invocation to a file (off by default, zero overhead). Runs are
+  gated behind `SIMPLEGRAPH_EVALS=1` + an API key and skip cleanly when a CLI or
+  key is absent, so they stay out of the default gate; the harness itself
+  (fixture, call log, assertions, plus a negative case) is CI-tested key-free via
+  a deterministic mock agent.
 
 ### Documentation
 
