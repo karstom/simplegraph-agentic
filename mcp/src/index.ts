@@ -41,6 +41,22 @@ const SHARED_ROOT = process.env.SIMPLEGRAPH_SHARED
 const DEFAULT_AUTHOR = process.env.SIMPLEGRAPH_AUTHOR || undefined;
 const DEFAULT_SESSION = process.env.SIMPLEGRAPH_SESSION || undefined;
 
+// Opt-in tool-call log. When SIMPLEGRAPH_CALL_LOG points at a file, every tool
+// invocation appends "<ISO-8601> <tool>\n". Off by default (zero overhead when
+// unset). Its purpose is observability — chiefly the live-harness evals, which
+// assert an agent actually called e.g. simplegraph_check_files before editing,
+// a fact no graph side effect alone can prove.
+const CALL_LOG = process.env.SIMPLEGRAPH_CALL_LOG || undefined;
+
+function logCall(tool: string): void {
+  if (!CALL_LOG) return;
+  try {
+    fs.appendFileSync(CALL_LOG, `${new Date().toISOString()} ${tool}\n`);
+  } catch {
+    // Never let logging break a tool call.
+  }
+}
+
 // ── File I/O ──────────────────────────────────────────────────────────────────
 
 function readGraphFile(name: string, root: string = GRAPH_ROOT): string {
@@ -1048,6 +1064,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args = {} } = request.params;
+  logCall(name);
 
   try {
     switch (name) {

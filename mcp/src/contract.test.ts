@@ -8,7 +8,7 @@ import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,6 +18,7 @@ const serverEntry = resolve(here, "index.ts");
 
 let client: Client;
 let graphDir: string;
+let callLog: string;
 
 /** A minimal but valid graph the server can read and mutate. */
 function makeGraph(): string {
@@ -58,10 +59,11 @@ function textOf(result: unknown): string {
 
 before(async () => {
   graphDir = makeGraph();
+  callLog = join(graphDir, "calls.log");
   const transport = new StdioClientTransport({
     command: process.execPath,                       // node
     args: ["--import", "tsx/esm", serverEntry],       // run the TS server directly
-    env: { ...process.env, SIMPLEGRAPH_ROOT: graphDir } as Record<string, string>,
+    env: { ...process.env, SIMPLEGRAPH_ROOT: graphDir, SIMPLEGRAPH_CALL_LOG: callLog } as Record<string, string>,
     stderr: "ignore",                                 // suppress the startup banner
   });
   client = new Client({ name: "contract-test", version: "1.0.0" }, { capabilities: {} });
@@ -114,4 +116,16 @@ test("an unknown tool is reported as an error, not a crash", async () => {
   const r = await client.callTool({ name: "simplegraph_add_node", arguments: { /* missing required fields */ } as Record<string, unknown> });
   // The server should answer (isError), not drop the connection.
   assert.ok(textOf(r).length > 0);
+});
+
+test("SIMPLEGRAPH_CALL_LOG records every tool invocation", async () => {
+  // Every call above ran against a server with the call log enabled; the log is
+  // what the live-harness evals read to prove an agent actually used the graph.
+  assert.ok(existsSync(callLog), "call log was not written");
+  const logged = readFileSync(callLog, "utf-8");
+  for (const tool of ["simplegraph_index", "simplegraph_check_files", "simplegraph_add_node", "simplegraph_get_node"]) {
+    assert.match(logged, new RegExp(`\\b${tool}\\b`), `call log is missing ${tool}`);
+  }
+  // Format: one "<ISO timestamp> <tool>" per line.
+  assert.match(logged, /^\d{4}-\d{2}-\d{2}T[\d:.]+Z simplegraph_/m);
 });

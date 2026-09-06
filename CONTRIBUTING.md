@@ -61,16 +61,37 @@ It aggregates:
 | `scripts/test_consistency_check.sh` | the edge/duplicate-ID gate fails loudly instead of passing silently |
 | `scripts/test_require_documentation.sh` | the "document before you finish" Stop hook blocks and fails open correctly |
 | `scripts/test_adapters.sh` | `setup.sh --tool X` installs the right files/content for every adapter |
+| `scripts/eval/test_eval_harness.sh` | the live-eval fixture, MCP call log, and assertions work — driven by a deterministic mock agent, plus a negative case proving the assertions aren't vacuous |
 | `scripts/consistency_check.sh` | this repo's own graph is consistent |
 
 CI (`.github/workflows/ci.yml`) runs the same script on **ubuntu-latest and
 macos-latest** — the macOS runner exists because the shell scripts are hardened
 for bash 3.2 and BSD grep/sed, and that claim should be tested, not trusted.
 
-This layer is deliberately deterministic and key-free. Live end-to-end runs of
-the CLI-scriptable harnesses (Claude Code headless, Codex CLI) are a separate,
-opt-in eval — they need API keys and tolerate non-determinism, so they don't
-belong in the default gate.
+### Live-harness evals (opt-in)
+
+The layers above are deterministic and key-free. Whether a *real* agent actually
+uses the graph — reads it before editing, records what it changed — is proven by
+a separate, opt-in eval that drives the CLI-scriptable harnesses against a
+throwaway fixture:
+
+```bash
+SIMPLEGRAPH_EVALS=1 ANTHROPIC_API_KEY=... bash scripts/eval/run_evals.sh   # Claude Code
+SIMPLEGRAPH_EVALS=1 OPENAI_API_KEY=...    bash scripts/eval/run_evals.sh   # Codex
+```
+
+`fixture.sh` plants a bug in a repo that has simplegraph installed and a
+HIGH-priority Watchlist pointing at the buggy file; the agent is asked to consult
+the graph, fix the bug, and record a node. `assert.sh` then checks three
+independent signals: the **call log** (an opt-in server feature,
+`SIMPLEGRAPH_CALL_LOG`) shows `check_files` then a write, the code was fixed, and
+a node landed in `core/`. A harness with no CLI or key is **skipped, not failed**.
+
+Kept out of the default gate on purpose: agent runs cost API tokens and are
+non-deterministic, so they're smoke evals, not pass/fail CI. GUI harnesses
+(Cursor, Zed, Antigravity) can't be driven headless — they're validated at the
+install/adapter layer by `test_adapters.sh` instead. The *harness itself* (fixture,
+call log, assertions) is CI-tested without keys via `scripts/eval/test_eval_harness.sh`.
 
 ## Issues and Discussions
 
