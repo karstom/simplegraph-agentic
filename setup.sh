@@ -271,7 +271,7 @@ fi
 
 # Always refresh maintenance scripts — they're tooling, not graph data
 mkdir -p "${TARGET}/core/scripts"
-for script in consistency_check.sh stale_check.sh auto_map.sh auto_map_shared.sh token_benchmark.sh; do
+for script in consistency_check.sh stale_check.sh auto_map.sh auto_map_shared.sh token_benchmark.sh require_documentation.sh; do
   [ -f "${SCRIPT_DIR}/scripts/${script}" ] && cp "${SCRIPT_DIR}/scripts/${script}" "${TARGET}/core/scripts/${script}"
 done
 chmod +x "${TARGET}/core/scripts/"*.sh 2>/dev/null || true
@@ -453,6 +453,20 @@ EOF
       else
         warn "Build the MCP server before use: cd ${SCRIPT_DIR}/mcp && npm install && npm run build"
       fi
+    fi
+
+    # Offer the "document before you finish" Stop hook (Claude Code only).
+    echo ""
+    echo "The 'document before you finish' hook reminds the agent to record a"
+    echo "graph node when it edits a HIGH-priority file without one — the capture"
+    echo "step CI can't enforce. It nudges once per task and fails open."
+    ask "Wire this Stop hook into .claude/settings.json? [y/N]"
+    read -r hook_choice
+    if [[ "${hook_choice}" =~ ^[Yy]$ ]]; then
+      bash "${SCRIPT_DIR}/scripts/install_doc_hook.sh" "${TARGET}" \
+        || warn "Could not wire the hook — see scripts/install_doc_hook.sh"
+    else
+      say "Skipped. Wire it later: bash ${SCRIPT_DIR}/scripts/install_doc_hook.sh ${TARGET}"
     fi
     ;;
   4)
