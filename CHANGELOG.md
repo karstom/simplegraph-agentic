@@ -4,6 +4,17 @@
 
 ### Added
 
+- **Antigravity support, rebuilt for 2.x.** The old adapter was deprecated — it
+  relied on a project-local `.agent/skills/memory/SKILL.md` with the index embedded
+  and a `.antigravityrules` `view_file` mandate, all of which moved or were removed
+  in Antigravity 2.x. The revived adapter uses what 2.x supports natively: the
+  shared **`AGENTS.md`** memory section (read at session start, IDE v1.20.3+ — the
+  same tool-neutral file the Codex adapter installs, so there's one source of truth)
+  plus an MCP config at **`.agents/mcp_config.json`**, so the agent calls
+  `simplegraph_index` rather than needing the index embedded. `setup.sh --tool
+  antigravity` installs both; `test_adapters.sh` covers the install and asserts the
+  legacy artifacts are gone. See `adapters/antigravity/README.md`.
+
 - **Force capture — the "document before you finish" Stop hook.** CI enforces
   that the graph is *valid* (no broken edges, no duplicate IDs); it can't enforce
   that new knowledge was *recorded* — nothing in a diff says "this fix deserved a

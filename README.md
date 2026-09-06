@@ -4,7 +4,7 @@
 
 Not a vector database. Not a code index. A small, typed graph of the things that only get learned the hard way — the bug that came back six times, the rule nobody wrote down, the decision that looks wrong until you know why. Plain markdown, in your repo, in git.
 
-Works with Claude Code, Cursor, Copilot, Zed, Codex CLI, and anything that takes custom instructions.
+Works with Claude Code, Cursor, Copilot, Zed, Codex CLI, Antigravity, and anything that takes custom instructions.
 
 ---
 
@@ -145,6 +145,7 @@ Three hops tell it what is fragile here and why.
 | GitHub Copilot | `.github/copilot-instructions.md` |
 | Zed | `.zed/rules/memory.md` + context server |
 | Codex CLI | `AGENTS.md` + `.codex/config.toml` |
+| Antigravity | `AGENTS.md` + `.agents/mcp_config.json` |
 | Anything else | Generic adapter for custom instructions |
 
 The installer picks the right one automatically. With the MCP server, the agent gets thirteen tools — the three that matter day to day being `simplegraph_check_files` before an edit, `simplegraph_anti_patterns` before generating code, and `simplegraph_add_node` after a fix. See [`mcp/README.md`](mcp/README.md).

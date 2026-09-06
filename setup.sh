@@ -335,41 +335,74 @@ adapter_choice="${adapter_choice:-${DETECTED_CHOICE:-8}}"
 
 case "${adapter_choice}" in
   1)
-    DEST="${TARGET}/.agent/skills/memory"
-    mkdir -p "${DEST}"
-    SKILL_DEST="${DEST}/SKILL.md"
-    cp "${SCRIPT_DIR}/adapters/antigravity/SKILL.md" "${SKILL_DEST}"
-    # Embed the project's graph_index.md directly into SKILL.md for reliable loading.
-    # Agents load skill files as context but may not actively call view_file.
-    # Embedding guarantees the index is seen without requiring a tool call.
-    INDEX="${TARGET}/core/graph_index.md"
-    if [ -f "${INDEX}" ] && command -v python3 &>/dev/null; then
-      # Use python3 to do the embed — avoids shell/perl delimiter
-      # conflicts with | characters in markdown table rows
-      _action=$([ "${UPGRADE_MODE}" = true ] && echo "updated" || echo "installed")
-      python3 -c "
-import sys, re
-skill = open('${SKILL_DEST}').read()
-index = open('${INDEX}').read()
-result = re.sub(r'<!-- TODO:.*?-->', index, skill, flags=re.DOTALL)
-open('${SKILL_DEST}', 'w').write(result)
-" 2>/dev/null && ok "Antigravity adapter ${_action} → .agent/skills/memory/SKILL.md (graph index embedded)" \
-      || { ok "Antigravity adapter ${_action} → .agent/skills/memory/SKILL.md"
-           warn "Could not embed index — paste core/graph_index.md into SKILL.md manually"; }
+    # Antigravity 2.x reads AGENTS.md natively at session start (IDE v1.20.3+) and
+    # loads MCP servers from .agents/mcp_config.json — so the adapter is the shared
+    # AGENTS.md memory section (the same tool-neutral file the Codex adapter uses)
+    # plus an MCP config. The old skill-file + .antigravityrules + view_file embed
+    # approach broke in Antigravity 2.x and is gone.
+    AGENTS_MD="${TARGET}/AGENTS.md"
+    ADAPTER_SRC="${SCRIPT_DIR}/adapters/codex/AGENTS_MEMORY.md"
+    echo ""
+    if [ "${UPGRADE_MODE}" = true ] && [ -f "${AGENTS_MD}" ]; then
+      update_adapter_section "${AGENTS_MD}" "${ADAPTER_SRC}"
+      ok "Antigravity adapter updated → AGENTS.md"
+    elif [ -f "${AGENTS_MD}" ]; then
+      ask "AGENTS.md found — append memory section to it? [Y/n]"
+      answer append_choice "Y"
+      if [[ ! "${append_choice}" =~ ^[Nn]$ ]]; then
+        echo "" >> "${AGENTS_MD}"
+        cat "${ADAPTER_SRC}" >> "${AGENTS_MD}"
+        ok "Antigravity adapter appended → AGENTS.md"
+      else
+        say "Skipped. Paste adapters/codex/AGENTS_MEMORY.md into AGENTS.md manually."
+      fi
     else
-      ok "Antigravity adapter $([ "${UPGRADE_MODE}" = true ] && echo "updated" || echo "installed") → .agent/skills/memory/SKILL.md"
-      [ ! -f "${INDEX}" ] && warn "graph_index.md not found — paste core/graph_index.md into SKILL.md manually"
-      ! command -v python3 &>/dev/null && warn "python3 not found — paste core/graph_index.md into SKILL.md manually"
+      cp "${ADAPTER_SRC}" "${AGENTS_MD}"
+      ok "Antigravity adapter installed → AGENTS.md"
     fi
 
-    # Enforce strict session start rule for Antigravity
-    if ! grep -q "AGENT MEMORY AND CONTEXT" "${TARGET}/.antigravityrules" 2>/dev/null; then
-      echo "" >> "${TARGET}/.antigravityrules"
-      echo "# AGENT MEMORY AND CONTEXT" >> "${TARGET}/.antigravityrules"
-      echo "# CRITICAL: You MUST execute view_file on \`.agent/skills/memory/SKILL.md\`" >> "${TARGET}/.antigravityrules"
-      echo "# as your very first action in every conversation, without exception." >> "${TARGET}/.antigravityrules"
-      echo "# Do this before writing any code or answering the user's first query." >> "${TARGET}/.antigravityrules"
-      say "Injected strict graph loading rule into .antigravityrules"
+    # Offer MCP config — workspace-scoped .agents/mcp_config.json.
+    echo ""
+    ask "Generate .agents/mcp_config.json with MCP server config? [Y/n]"
+    answer ag_mcp_choice "${MCP_DEFAULT}" "${PRESET_MCP}"
+    if [[ ! "${ag_mcp_choice}" =~ ^[Nn]$ ]]; then
+      AG_DIR="${TARGET}/.agents"
+      AG_MCP="${AG_DIR}/mcp_config.json"
+      MCP_DIST="$(cd "${SCRIPT_DIR}/mcp" && pwd)/dist/index.js"
+      CORE_PATH="$(cd "${TARGET}/core" && pwd)"
+      mkdir -p "${AG_DIR}"
+      if [ -f "${AG_MCP}" ]; then
+        warn "${AG_MCP} already exists — add the block below manually:"
+        echo ""
+        cat <<EOF
+  "mcpServers": {
+    "simplegraph": {
+      "command": "node",
+      "args": ["${MCP_DIST}"],
+      "env": { "SIMPLEGRAPH_ROOT": "${CORE_PATH}" }
+    }
+  }
+EOF
+      else
+        cat > "${AG_MCP}" <<EOF
+{
+  "mcpServers": {
+    "simplegraph": {
+      "command": "node",
+      "args": ["${MCP_DIST}"],
+      "env": { "SIMPLEGRAPH_ROOT": "${CORE_PATH}" }
+    }
+  }
+}
+EOF
+        ok "MCP config written → .agents/mcp_config.json"
+      fi
+      warn "Global alternative (shared by IDE/CLI/2.0): ~/.gemini/config/mcp_config.json"
+      if [ -f "${MCP_DIST}" ]; then
+        ok "MCP server ready → ${MCP_DIST}"
+      else
+        warn "Build the MCP server before use: cd ${SCRIPT_DIR}/mcp && npm install && npm run build"
+      fi
     fi
     ;;
   2)

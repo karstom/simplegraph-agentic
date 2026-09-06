@@ -80,12 +80,15 @@ sg reindex /path/to/your/project     # or: node dist/seed/cli.js reindex --help
 
 ### Antigravity
 
-Add to `~/.gemini/antigravity/mcp_config.json`:
+Antigravity 2.x loads MCP servers from a workspace file, `<project>/.agents/mcp_config.json`
+(what `setup.sh --tool antigravity` writes), or globally from
+`~/.gemini/config/mcp_config.json` (shared by the IDE, CLI, and 2.0). The older
+`~/.gemini/antigravity/mcp_config.json` path is pre-2.x. Use one file:
 
 ```json
 {
   "mcpServers": {
-    "sg-my-project": {
+    "simplegraph": {
       "command": "node",
       "args": ["/absolute/path/to/simplegraph-agentic/mcp/dist/index.js"],
       "env": {
@@ -95,6 +98,9 @@ Add to `~/.gemini/antigravity/mcp_config.json`:
   }
 }
 ```
+
+Antigravity also reads `AGENTS.md` at session start (IDE v1.20.3+), so the
+markdown adapter and the MCP server work together — same as the Codex setup.
 
 ### Claude Desktop
 
@@ -307,7 +313,7 @@ The agent namespaces tools by server name and naturally calls the right one:
 }
 ```
 
-_(Antigravity: `~/.gemini/antigravity/mcp_config.json` — Claude Desktop: `~/Library/Application Support/Claude/claude_desktop_config.json`)_
+_(Antigravity 2.x: `~/.gemini/config/mcp_config.json` (global) or per-project `.agents/mcp_config.json` — Claude Desktop: `~/Library/Application Support/Claude/claude_desktop_config.json`)_
 
 ### Shared / cross-repo graph
 
