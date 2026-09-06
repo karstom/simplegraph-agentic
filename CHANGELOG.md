@@ -64,6 +64,15 @@
 
 ### Fixed
 
+- **Installer meta-text leaked into the user's CLAUDE.md / AGENTS.md.** The
+  Claude Code and Codex adapters opened with framing meant for a human reading the
+  source ("Add this section to your project's `CLAUDE.md` to enable persistent
+  memory graph support.") — but `setup.sh` appends the file verbatim, so that line
+  landed inside the installed instructions as a nonsensical self-reference. Removed
+  the framing (redundant H1 + install sentence + rule) from both adapters, leaving
+  the marker on the real `## Memory Graph` section. `test_adapters.sh` now guards
+  against installer meta-text in the two auto-injected adapters (and finally checks
+  the Codex adapter's content, which it had skipped).
 - **The `curl | bash` installer ate its own adapter prompt.** Under the one-line
   install, `install.sh` handed `setup.sh` its own stdin — which is the piped
   installer script. `setup.sh`'s adapter prompt then `read` the next line of that

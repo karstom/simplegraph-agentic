@@ -54,8 +54,27 @@ section "Adapter source content checks"
 check_adapter_content "${REPO_DIR}/adapters/antigravity/SKILL.md"     "Antigravity"
 check_adapter_content "${REPO_DIR}/adapters/cursor/memory.mdc"         "Cursor"
 check_adapter_content "${REPO_DIR}/adapters/claude-code/CLAUDE_MEMORY.md" "Claude Code"
+check_adapter_content "${REPO_DIR}/adapters/codex/AGENTS_MEMORY.md"   "Codex"
 check_adapter_content "${REPO_DIR}/adapters/copilot/copilot-instructions-memory.md" "Copilot"
 check_adapter_content "${REPO_DIR}/adapters/generic/AGENT_MEMORY.md"  "Generic"
+
+# The claude-code and codex adapters are appended verbatim into a user's
+# CLAUDE.md / AGENTS.md, so any installer meta-instruction ("Add this section to
+# your project's CLAUDE.md…") leaks in and reads as a nonsensical self-reference.
+# Generic/Antigravity are pasted by hand, so their paste-instructions are fine —
+# this guard applies only to the auto-injected pair.
+FORBIDDEN_META='Add this section to your project|paste [^.]*into your|to enable persistent memory graph support'
+check_no_install_meta() {
+  local file="$1" name="$2"
+  if grep -qiE "${FORBIDDEN_META}" "$file"; then
+    fail "${name}: installer meta-text would leak into the user's file:"
+    grep -niE "${FORBIDDEN_META}" "$file" | sed 's/^/        /'
+  else
+    pass "${name}: no installer meta-text leaks into injected content"
+  fi
+}
+check_no_install_meta "${REPO_DIR}/adapters/claude-code/CLAUDE_MEMORY.md" "Claude Code"
+check_no_install_meta "${REPO_DIR}/adapters/codex/AGENTS_MEMORY.md"       "Codex"
 
 # Antigravity-specific: must have the embed TODO placeholder
 section "Antigravity embed placeholder"
