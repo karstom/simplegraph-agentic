@@ -1,0 +1,39 @@
+name: CI
+
+# Dogfood the gate the project recommends: every push to main/dev and every PR
+# runs the full deterministic suite — MCP unit + stdio-contract tests, the shell
+# gates, the adapter install matrix, and the repo's own graph consistency.
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # macOS ships bash 3.2 and BSD grep/sed — the shell scripts are hardened
+        # for exactly that, so run there too rather than trust the comments.
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: mcp/package-lock.json
+
+      - name: Install MCP dependencies
+        working-directory: mcp
+        run: npm ci
+
+      - name: Run all deterministic suites
+        run: bash scripts/test_all.sh
