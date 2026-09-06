@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Force capture — the "document before you finish" Stop hook.** CI enforces
+  that the graph is *valid* (no broken edges, no duplicate IDs); it can't enforce
+  that new knowledge was *recorded* — nothing in a diff says "this fix deserved a
+  Regression node." `scripts/require_documentation.sh`, wired as a Claude Code
+  `Stop` hook, closes that gap: when the agent tries to finish a task that changed
+  a file a HIGH-priority node points at without touching the graph, it blocks once
+  and names the files and nodes to record. Deliberately restrained — it nudges
+  once per task (a `stop_hook_active` guard), fails open on any error or non-git
+  tree (`SIMPLEGRAPH_SKIP_DOC_HOOK=1` disables it), and is scoped to HIGH-priority
+  nodes so it doesn't train agents to write junk to get past it. `scripts/install_doc_hook.sh`
+  wires it idempotently into `.claude/settings.json` (offered by `setup.sh` during
+  Claude Code setup); `scripts/test_require_documentation.sh` covers the behavior.
+  This is the "force capture" companion to `consistency_check.sh`'s "force
+  validity" — see `docs/maintenance.md`.
+
 ### Documentation
 
 - **Restored a comparison to the alternatives**, dropped in the README rewrite,
