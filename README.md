@@ -4,7 +4,7 @@
 
 Not a vector database. Not a code index. A small, typed graph of the things that only get learned the hard way — the bug that came back six times, the rule nobody wrote down, the decision that looks wrong until you know why. Plain markdown, in your repo, in git.
 
-Works with Claude Code, Cursor, Copilot, Zed, Codex CLI, and anything that takes custom instructions.
+Works with Antigravity, Claude Code, Cursor, Copilot, Zed, Codex CLI, and anything that takes custom instructions.
 
 ---
 
@@ -49,7 +49,7 @@ curl -fsSL https://raw.githubusercontent.com/karstom/simplegraph-agentic/main/in
 less install.sh && bash install.sh
 ```
 
-Options: `--tool cursor`, `--dir path/to/project`, `--no-mcp`, `--yes`. Through a pipe, pass them with `bash -s --`. Re-run the same command to upgrade. Linux, WSL, and macOS; bash 3.2+.
+Options: `--tool antigravity`, `--tool cursor`, `--dir path/to/project`, `--no-mcp`, `--yes`. Through a pipe, pass them with `bash -s --`. Re-run the same command to upgrade. Linux, WSL, macOS, and Windows (via Node CLI).
 
 ## Then give it something to remember
 
@@ -140,6 +140,7 @@ Three hops tell it what is fragile here and why.
 
 | Tool | Installed to |
 |---|---|
+| Antigravity | `.agents/plugins/simplegraph/` + `AGENTS.md` |
 | Claude Code | `CLAUDE.md` + `.mcp.json` (MCP server) |
 | Cursor | `.cursor/rules/memory.mdc` |
 | GitHub Copilot | `.github/copilot-instructions.md` |

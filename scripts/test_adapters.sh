@@ -76,12 +76,12 @@ check_no_install_meta() {
 check_no_install_meta "${REPO_DIR}/adapters/claude-code/CLAUDE_MEMORY.md" "Claude Code"
 check_no_install_meta "${REPO_DIR}/adapters/codex/AGENTS_MEMORY.md"       "Codex"
 
-# Antigravity-specific: must have the embed TODO placeholder
-section "Antigravity embed placeholder"
-if grep -q "<!-- TODO:" "${REPO_DIR}/adapters/antigravity/SKILL.md"; then
-  pass "SKILL.md template has embed TODO placeholder"
+# Antigravity plugin manifest & rules check
+section "Antigravity plugin files"
+if [ -f "${REPO_DIR}/adapters/antigravity/plugin.json" ] && [ -f "${REPO_DIR}/adapters/antigravity/rules/AGENTS.md" ]; then
+  pass "Antigravity plugin manifest and rules present"
 else
-  fail "SKILL.md template missing embed TODO placeholder (setup.sh can't inject index)"
+  fail "Antigravity plugin.json or rules/AGENTS.md missing"
 fi
 
 # ── Install each adapter via setup.sh and verify ──────────────────────────────
@@ -89,28 +89,37 @@ section "Antigravity install test (setup.sh option 1)"
 TMPDIR_AG=$(mktemp -d /tmp/sg_test_ag.XXXXXX)
 trap "rm -rf ${TMPDIR_AG}" EXIT
 
-printf "n\n1\n" | bash "${REPO_DIR}/setup.sh" "${TMPDIR_AG}" > /tmp/sg_setup_output.txt 2>&1
+bash "${REPO_DIR}/setup.sh" "${TMPDIR_AG}" --tool antigravity --mcp --yes > /tmp/sg_setup_output.txt 2>&1
 
-SKILL_DEST="${TMPDIR_AG}/.agent/skills/memory/SKILL.md"
-if [ -f "${SKILL_DEST}" ]; then
-  pass "Antigravity: SKILL.md installed at correct path"
+if [ -f "${TMPDIR_AG}/AGENTS.md" ] && grep -q "Memory Graph" "${TMPDIR_AG}/AGENTS.md"; then
+  pass "Antigravity: AGENTS.md installed with memory section"
 else
-  fail "Antigravity: SKILL.md not found at ${SKILL_DEST}"
+  fail "Antigravity: AGENTS.md missing or without memory section"
 fi
 
-# Check embed worked (index content should replace TODO)
-if [ -f "${SKILL_DEST}" ]; then
-  if grep -q "TODO" "${SKILL_DEST}"; then
-    fail "Antigravity: TODO placeholder not replaced (embed failed)"
-  else
-    pass "Antigravity: graph index embedded (no TODO placeholder)"
-  fi
-  INDEX_LINES=$(grep -c "Quick Index\|Task Routing\|graph_index\|## Quick\|## Task" "${SKILL_DEST}" || echo 0)
-  if [ "${INDEX_LINES}" -gt 0 ]; then
-    pass "Antigravity: embedded content contains index sections (${INDEX_LINES} matches)"
-  else
-    fail "Antigravity: embedded SKILL.md missing expected index content"
-  fi
+PLUGIN_DEST="${TMPDIR_AG}/.agents/plugins/simplegraph"
+if [ -f "${PLUGIN_DEST}/plugin.json" ] && [ -f "${PLUGIN_DEST}/rules/AGENTS.md" ]; then
+  pass "Antigravity: plugin installed at .agents/plugins/simplegraph"
+else
+  fail "Antigravity: plugin missing from ${PLUGIN_DEST}"
+fi
+
+if [ -f "${PLUGIN_DEST}/skills/simplegraph/SKILL.md" ] && [ -f "${PLUGIN_DEST}/hooks.json" ]; then
+  pass "Antigravity: skill and hooks installed in plugin"
+else
+  fail "Antigravity: skill or hooks missing from plugin"
+fi
+
+if [ -f "${PLUGIN_DEST}/mcp_config.json" ] || [ -f "${TMPDIR_AG}/.agents/mcp_config.json" ]; then
+  pass "Antigravity: MCP configuration installed"
+else
+  fail "Antigravity: MCP configuration missing"
+fi
+
+if [ ! -e "${TMPDIR_AG}/.agent/skills/memory/SKILL.md" ] && [ ! -e "${TMPDIR_AG}/.antigravityrules" ]; then
+  pass "Antigravity: no legacy .agent/skills or .antigravityrules artifacts"
+else
+  fail "Antigravity: legacy skill/.antigravityrules artifact still written"
 fi
 
 # Check scripts were installed

@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "simplegraph": {
+      "command": "node",
+      "args": ["${workspaceFolder}/mcp/dist/index.js"],
+      "env": {
+        "SIMPLEGRAPH_ROOT": "${workspaceFolder}/core"
+      }
+    }
+  }
+}

@@ -5,14 +5,15 @@
   "type": "module",
   "bin": {
     "simplegraph-mcp": "./dist/index.js",
-    "sg": "./dist/seed/cli.js"
+    "sg": "./dist/seed/cli.js",
+    "simplegraph": "./dist/seed/cli.js"
   },
   "scripts": {
     "build": "tsc",
     "dev": "node --loader ts-node/esm src/index.ts",
     "start": "node dist/index.js",
     "prepare": "npm run build",
-    "test": "node --import tsx/esm --test src/tools.test.ts src/parser.test.ts src/anchors.test.ts src/seed/seed.test.ts src/seed/candidates.test.ts src/multiagent.test.ts src/contract.test.ts"
+    "test": "node --import tsx/esm --test src/tools.test.ts src/parser.test.ts src/anchors.test.ts src/seed/seed.test.ts src/seed/candidates.test.ts src/multiagent.test.ts src/contract.test.ts src/cli.test.ts"
   },
   "files": [
     "dist",

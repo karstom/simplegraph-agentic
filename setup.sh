@@ -70,6 +70,7 @@ tool_to_choice() {
 # flag and no prompt. Order matters: a project with both CLAUDE.md and AGENTS.md
 # is far more likely to be a Claude Code project that also ships an AGENTS.md.
 detect_tool() {
+  [ -d "${TARGET}/.agents" ] || [ -d "${TARGET}/.agent" ] && { echo "antigravity"; return; }
   [ -f "${TARGET}/CLAUDE.md" ] || [ -d "${TARGET}/.claude" ] && { echo "claude-code"; return; }
   [ -d "${TARGET}/.cursor" ] || [ -f "${TARGET}/.cursorrules" ] && { echo "cursor"; return; }
   [ -f "${TARGET}/.github/copilot-instructions.md" ] && { echo "copilot"; return; }
@@ -335,41 +336,86 @@ adapter_choice="${adapter_choice:-${DETECTED_CHOICE:-8}}"
 
 case "${adapter_choice}" in
   1)
-    DEST="${TARGET}/.agent/skills/memory"
-    mkdir -p "${DEST}"
-    SKILL_DEST="${DEST}/SKILL.md"
-    cp "${SCRIPT_DIR}/adapters/antigravity/SKILL.md" "${SKILL_DEST}"
-    # Embed the project's graph_index.md directly into SKILL.md for reliable loading.
-    # Agents load skill files as context but may not actively call view_file.
-    # Embedding guarantees the index is seen without requiring a tool call.
-    INDEX="${TARGET}/core/graph_index.md"
-    if [ -f "${INDEX}" ] && command -v python3 &>/dev/null; then
-      # Use python3 to do the embed — avoids shell/perl delimiter
-      # conflicts with | characters in markdown table rows
-      _action=$([ "${UPGRADE_MODE}" = true ] && echo "updated" || echo "installed")
-      python3 -c "
-import sys, re
-skill = open('${SKILL_DEST}').read()
-index = open('${INDEX}').read()
-result = re.sub(r'<!-- TODO:.*?-->', index, skill, flags=re.DOTALL)
-open('${SKILL_DEST}', 'w').write(result)
-" 2>/dev/null && ok "Antigravity adapter ${_action} → .agent/skills/memory/SKILL.md (graph index embedded)" \
-      || { ok "Antigravity adapter ${_action} → .agent/skills/memory/SKILL.md"
-           warn "Could not embed index — paste core/graph_index.md into SKILL.md manually"; }
+    # Antigravity 2.x: Installs the native Antigravity Plugin (.agents/plugins/simplegraph/)
+    # and the session-start rule into AGENTS.md.
+    PLUGIN_DIR="${TARGET}/.agents/plugins/simplegraph"
+    mkdir -p "${PLUGIN_DIR}/rules" "${PLUGIN_DIR}/skills/simplegraph"
+    cp "${SCRIPT_DIR}/adapters/antigravity/plugin.json" "${PLUGIN_DIR}/plugin.json"
+    cp "${SCRIPT_DIR}/adapters/antigravity/rules/AGENTS.md" "${PLUGIN_DIR}/rules/AGENTS.md"
+    cp "${SCRIPT_DIR}/adapters/antigravity/SKILL.md" "${PLUGIN_DIR}/skills/simplegraph/SKILL.md"
+    cp "${SCRIPT_DIR}/adapters/antigravity/hooks.json" "${PLUGIN_DIR}/hooks.json"
+
+    # Also install or update the session-start rule in project-root AGENTS.md for universal support
+    AGENTS_MD="${TARGET}/AGENTS.md"
+    ADAPTER_SRC="${SCRIPT_DIR}/adapters/antigravity/rules/AGENTS.md"
+    echo ""
+    if [ "${UPGRADE_MODE}" = true ] && [ -f "${AGENTS_MD}" ]; then
+      update_adapter_section "${AGENTS_MD}" "${ADAPTER_SRC}"
+      ok "Antigravity adapter updated → AGENTS.md"
+    elif [ -f "${AGENTS_MD}" ]; then
+      ask "AGENTS.md found — append memory section to it? [Y/n]"
+      answer append_choice "Y"
+      if [[ ! "${append_choice}" =~ ^[Nn]$ ]]; then
+        update_adapter_section "${AGENTS_MD}" "${ADAPTER_SRC}" || {
+          echo "" >> "${AGENTS_MD}"
+          cat "${ADAPTER_SRC}" >> "${AGENTS_MD}"
+        }
+        ok "Antigravity adapter appended → AGENTS.md"
+      else
+        say "Skipped root AGENTS.md. Plugin rule loaded from .agents/plugins/simplegraph/rules/AGENTS.md."
+      fi
     else
-      ok "Antigravity adapter $([ "${UPGRADE_MODE}" = true ] && echo "updated" || echo "installed") → .agent/skills/memory/SKILL.md"
-      [ ! -f "${INDEX}" ] && warn "graph_index.md not found — paste core/graph_index.md into SKILL.md manually"
-      ! command -v python3 &>/dev/null && warn "python3 not found — paste core/graph_index.md into SKILL.md manually"
+      cp "${ADAPTER_SRC}" "${AGENTS_MD}"
+      ok "Antigravity adapter installed → AGENTS.md"
     fi
 
-    # Enforce strict session start rule for Antigravity
-    if ! grep -q "AGENT MEMORY AND CONTEXT" "${TARGET}/.antigravityrules" 2>/dev/null; then
-      echo "" >> "${TARGET}/.antigravityrules"
-      echo "# AGENT MEMORY AND CONTEXT" >> "${TARGET}/.antigravityrules"
-      echo "# CRITICAL: You MUST execute view_file on \`.agent/skills/memory/SKILL.md\`" >> "${TARGET}/.antigravityrules"
-      echo "# as your very first action in every conversation, without exception." >> "${TARGET}/.antigravityrules"
-      echo "# Do this before writing any code or answering the user's first query." >> "${TARGET}/.antigravityrules"
-      say "Injected strict graph loading rule into .antigravityrules"
+    # Clean up legacy Antigravity 1.x artifacts if upgrading
+    rm -f "${TARGET}/.antigravityrules"
+    rm -rf "${TARGET}/.agent/skills/memory"
+
+    # Write MCP configuration into the plugin and offer workspace .agents/mcp_config.json
+    MCP_DIST="$(cd "${SCRIPT_DIR}/mcp" && pwd)/dist/index.js"
+    CORE_PATH="$(cd "${TARGET}/core" && pwd)"
+
+    cat > "${PLUGIN_DIR}/mcp_config.json" <<EOF
+{
+  "mcpServers": {
+    "simplegraph": {
+      "command": "node",
+      "args": ["${MCP_DIST}"],
+      "env": { "SIMPLEGRAPH_ROOT": "${CORE_PATH}" }
+    }
+  }
+}
+EOF
+
+    echo ""
+    ask "Generate workspace .agents/mcp_config.json with MCP server config? [Y/n]"
+    answer ag_mcp_choice "${MCP_DEFAULT}" "${PRESET_MCP}"
+    if [[ ! "${ag_mcp_choice}" =~ ^[Nn]$ ]]; then
+      AG_DIR="${TARGET}/.agents"
+      AG_MCP="${AG_DIR}/mcp_config.json"
+      mkdir -p "${AG_DIR}"
+      cat > "${AG_MCP}" <<EOF
+{
+  "mcpServers": {
+    "simplegraph": {
+      "command": "node",
+      "args": ["${MCP_DIST}"],
+      "env": { "SIMPLEGRAPH_ROOT": "${CORE_PATH}" }
+    }
+  }
+}
+EOF
+      ok "MCP config written → .agents/mcp_config.json"
+    fi
+
+    ok "Antigravity plugin installed → .agents/plugins/simplegraph/"
+    warn "Global alternative: ~/.gemini/config/mcp_config.json"
+    if [ -f "${MCP_DIST}" ]; then
+      ok "MCP server ready → ${MCP_DIST}"
+    else
+      warn "Build the MCP server before use: cd ${SCRIPT_DIR}/mcp && npm install && npm run build"
     fi
     ;;
   2)

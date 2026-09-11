@@ -74,6 +74,12 @@ if [ ! -d "${CORE_DIR}" ]; then
   exit 1
 fi
 
+# Delegate to the cross-platform TypeScript implementation if node and dist/ are built.
+MCP_CLI="${PROJECT_DIR}/mcp/dist/seed/cli.js"
+if [ -f "$MCP_CLI" ] && command -v node >/dev/null 2>&1; then
+  exec node "$MCP_CLI" stale "$PROJECT_DIR" --graph "$CORE_DIR" --days "${MAX_AGE_DAYS}"
+fi
+
 echo "Stale check: MAX_AGE_DAYS=${MAX_AGE_DAYS}, CORE_DIR=${CORE_DIR}"
 echo ""
 

@@ -1,0 +1,12 @@
+{
+  "simplegraph-documentation-gate": {
+    "enabled": true,
+    "Stop": [
+      {
+        "type": "command",
+        "command": "node ./mcp/dist/seed/cli.js hook require-doc",
+        "timeout": 15
+      }
+    ]
+  }
+}

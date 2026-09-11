@@ -92,6 +92,15 @@ elif [ -d "$(dirname "$CORE_DIR")/shared" ]; then
   SHARED_DIR="$(dirname "$CORE_DIR")/shared"
 fi
 
+# Delegate to the cross-platform TypeScript implementation if node and dist/ are built.
+REPO_ROOT="$(dirname "$CORE_DIR")"
+MCP_CLI="${REPO_ROOT}/mcp/dist/seed/cli.js"
+if [ -f "$MCP_CLI" ] && command -v node >/dev/null 2>&1; then
+  SHARED_FLAG=""
+  [ -n "$SHARED_DIR_ARG" ] && SHARED_FLAG="--shared $SHARED_DIR_ARG"
+  exec node "$MCP_CLI" check "$REPO_ROOT" --graph "$CORE_DIR" $SHARED_FLAG
+fi
+
 CORE_STRIPPED=$(mktemp /tmp/sg_core.XXXXXX)
 SHARED_STRIPPED=$(mktemp /tmp/sg_shared.XXXXXX)
 ALL_STRIPPED=$(mktemp /tmp/sg_all.XXXXXX)

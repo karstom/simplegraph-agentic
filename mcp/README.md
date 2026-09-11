@@ -51,36 +51,64 @@ npm install
 npm run build
 ```
 
-## Bundled CLI: `sg seed`
+## Bundled CLI: `sg` (Cross-Platform)
 
-This package also ships the `sg` bin. `sg seed` bootstraps a memory graph by
-mining a repository's git history and working tree — reverts/fix commits →
-Regressions, ADRs and merge bodies → Decisions, rule comments and test names →
-Invariants, TODO/churn → Watchlists, directory structure → Components.
-Deterministic, offline, no API key; every node carries provenance and a
-confidence score, and nothing is written without review (`--dry-run` /
-interactive confirm / `--yes`). See the root README for the full flag list.
+This package also ships the `sg` bin (`dist/seed/cli.js`), providing a unified, cross-platform TypeScript CLI for Windows (cmd/PowerShell), macOS, and Linux without bash or unix utility dependencies:
 
 ```bash
-npm link          # or: node dist/seed/cli.js seed --help
-sg seed /path/to/your/project --dry-run
+npm link          # exposes `sg` globally, or invoke via `node dist/seed/cli.js <cmd>`
 ```
 
-The `sg` bin also provides `sg reindex`, which regenerates `graph_index.md`'s
-Quick Index from the current node files. Because the output is sorted and
-order-independent, it's the intended way to resolve a `graph_index.md` merge
-conflict after two branches both added nodes: take either side, then run
-`sg reindex`.
+### Commands
 
-```bash
-sg reindex /path/to/your/project     # or: node dist/seed/cli.js reindex --help
-```
+- **`sg seed <path>`**: Bootstraps a memory graph by mining a repository's git history and working tree — reverts/fix commits → Regressions, ADRs and merge bodies → Decisions, rule comments and test names → Invariants, TODO/churn → Watchlists, directory structure → Components. Deterministic, offline, no API key; every node carries provenance and confidence score (`--dry-run` / `--yes`).
+  ```bash
+  sg seed /path/to/your/project --dry-run
+  ```
+
+- **`sg reindex [path]`**: Regenerates `graph_index.md`'s Quick Index from current node files. Deterministic, sorted, and order-independent — ideal for resolving `graph_index.md` merge conflicts after parallel branch merges.
+  ```bash
+  sg reindex /path/to/your/project
+  ```
+
+- **`sg check [path] [--shared <dir>]`**: Cross-platform consistency checker. Validates that node IDs are unique across all node files, all edge references (`relates_to`, `caused_by`, etc.) point to existing nodes, and shared graph nodes carry attribution (`Author`/`Session`). Replaces `scripts/consistency_check.sh`.
+  ```bash
+  sg check /path/to/your/project
+  ```
+
+- **`sg stale [path]`**: Stale reference detector. Flags nodes unmodified for > 90 days (`LastUpdated`), files anchored that no longer exist on disk, directory paths that don't exist, and symbol anchors no longer found in anchored files. Replaces `scripts/stale_check.sh`.
+  ```bash
+  sg stale /path/to/your/project
+  ```
+
+- **`sg hook require-doc [--graph <dir>] [--diff-cmd <cmd>]`**: Pre-commit / Stop hook. Inspects `git diff` against active HIGH-priority Regressions, Invariants, and Watchlists. Reminds the agent to document fixes before completing tasks. Features single-nudge idempotency (`.sg.nudge`) to prevent blocking workflows. Replaces `scripts/require_documentation.sh`.
+  ```bash
+  sg hook require-doc
+  ```
 
 ## Configuration
 
 ### Antigravity
 
-Add to `~/.gemini/antigravity/mcp_config.json`:
+In Antigravity 2.x, SimpleGraph is delivered as a workspace plugin (`.agents/plugins/simplegraph/`) installed via `setup.sh`, bundling rules, skills, hooks, and MCP configuration together.
+
+For project-level MCP configuration, add to `.agents/mcp_config.json` (or inside the plugin at `.agents/plugins/simplegraph/mcp_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "simplegraph": {
+      "command": "node",
+      "args": ["/absolute/path/to/simplegraph-agentic/mcp/dist/index.js"],
+      "env": {
+        "SIMPLEGRAPH_ROOT": "${workspaceFolder}/core"
+      }
+    }
+  }
+}
+```
+
+For global multi-project configuration, add to `~/.gemini/config/mcp_config.json` (or `~/.gemini/antigravity/mcp_config.json`):
 
 ```json
 {
@@ -307,7 +335,7 @@ The agent namespaces tools by server name and naturally calls the right one:
 }
 ```
 
-_(Antigravity: `~/.gemini/antigravity/mcp_config.json` — Claude Desktop: `~/Library/Application Support/Claude/claude_desktop_config.json`)_
+_(Antigravity: `~/.gemini/config/mcp_config.json`, project plugin `.agents/plugins/simplegraph/mcp_config.json`, or `.agents/mcp_config.json` — Claude Desktop: `~/Library/Application Support/Claude/claude_desktop_config.json`)_
 
 ### Shared / cross-repo graph
 
@@ -439,7 +467,7 @@ things keep that friction low so graph updates don't get deferred:
   land them promptly; `git fetch` before starting parallel work so you begin from
   the current graph. This is convention, not enforcement — the graph is a git
   artifact and follows your git workflow.
-- **After any graph merge:** `sg reindex` then `core/scripts/consistency_check.sh`
+- **After any graph merge:** `sg reindex` then `sg check` (or `core/scripts/consistency_check.sh`)
   — the latter catches duplicate IDs a union merge can produce when two branches
   minted the same ID (git raises no conflict for that on its own).
 
@@ -455,13 +483,13 @@ reads it. The controls:
 - **Attribution.** Set `SIMPLEGRAPH_AUTHOR`/`SIMPLEGRAPH_SESSION` (or pass
   `author`/`session` to `add_node`) so each node records which agent and session
   created it — the signal for arbitrating conflicting nodes after a merge.
-- **Duplicate-ID guard.** `consistency_check.sh` fails if two nodes share an ID.
+- **Duplicate-ID guard.** `sg check` (or `consistency_check.sh`) fails if two nodes share an ID.
   Run it in CI or a pre-commit hook.
 - **The `shared/` tier is highest-stakes.** A shared node is loaded by *every*
   repo and agent in the org. The server is **read-only** against `SIMPLEGRAPH_SHARED`
   — no agent can write it — so promoting a node to `shared/` is always a
   deliberate human act (copy the node, commit, review). Treat those PRs with more
-  scrutiny than per-repo graph changes. `consistency_check.sh` auto-detects a
+  scrutiny than per-repo graph changes. `sg check` (or `consistency_check.sh`) auto-detects a
   sibling `shared/` graph (or take `--shared <dir>`), validates its edges and IDs
   alongside `core/`, and warns when a shared node carries no attribution — an
   org-wide rule with no traceable source.

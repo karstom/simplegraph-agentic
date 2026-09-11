@@ -55,6 +55,12 @@ CORE="${SIMPLEGRAPH_ROOT:-$ROOT/core}"
 [ -d "$CORE" ] || allow
 COREREL=$(realpath --relative-to="$ROOT" "$CORE" 2>/dev/null || echo "core")
 
+# Delegate to the cross-platform TypeScript implementation if node and dist/ are built.
+MCP_CLI="${ROOT}/mcp/dist/seed/cli.js"
+if [ -f "$MCP_CLI" ] && command -v node >/dev/null 2>&1; then
+  printf '%s' "$INPUT" | exec node "$MCP_CLI" hook require-doc --repo "$ROOT" --graph "$CORE"
+fi
+
 # What changed in this task: tracked edits vs HEAD, plus new untracked files.
 CHANGED=$(
   { git -C "$ROOT" diff --name-only HEAD 2>/dev/null
