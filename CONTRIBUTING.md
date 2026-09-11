@@ -22,8 +22,8 @@ Use a name that can't be filtered by a task-specific heuristic:
 - ✅ `codebase-memory` (broad)
 - ❌ `memory-graph` (sounds optional)
 
-**3. Register as a Knowledge Item if supported (tool-specific)**
-Some tools (e.g. Antigravity) have a hardcoded boot sequence that reads Knowledge Items before any context loading. Packaging a pointer as a KI guarantees a read regardless of task type. Consult your tool's docs for the KI format.
+**3. Use the tool's session-start context file (tool-specific)**
+Some tools read a specific file before any task-driven context loading — e.g. Antigravity 2.x reads `AGENTS.md` (and plugin rules) at session start, and most CLIs read `AGENTS.md` or `CLAUDE.md`. Installing the memory section there guarantees a read regardless of task type. Consult your tool's docs for the exact file and precedence.
 
 ### Adapter Requirements
 

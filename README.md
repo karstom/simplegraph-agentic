@@ -49,7 +49,16 @@ curl -fsSL https://raw.githubusercontent.com/karstom/simplegraph-agentic/main/in
 less install.sh && bash install.sh
 ```
 
-Options: `--tool antigravity`, `--tool cursor`, `--dir path/to/project`, `--no-mcp`, `--yes`. Through a pipe, pass them with `bash -s --`. Re-run the same command to upgrade. Linux, WSL, macOS, and Windows (via Node CLI).
+Options: `--tool antigravity`, `--tool cursor`, `--dir path/to/project`, `--no-mcp`, `--yes`. Through a pipe, pass them with `bash -s --`. Re-run the same command to upgrade. Supported on Linux, WSL, and macOS.
+
+**On Windows (PowerShell / CMD):**
+Clone the repository and install the cross-platform Node CLI:
+```powershell
+cd mcp
+npm install
+npm run build
+npm link    # exposes `sg` globally, or run via: node dist/seed/cli.js <cmd>
+```
 
 ## Then give it something to remember
 
@@ -61,6 +70,11 @@ sg seed               # review the draft, then commit it
 ```
 
 Deterministic, offline, no API key, full provenance on every node. On a 718-commit repo it finds around 60 nodes to start from. See [seeding](docs/seeding.md).
+
+The bundled `sg` CLI also provides cross-platform graph maintenance without bash dependencies:
+- `sg check` — validates edge targets and duplicate node IDs across `core/` and `shared/`
+- `sg stale` — detects outdated nodes (>90 days) and broken file/symbol anchors
+- `sg reindex` — rebuilds `graph_index.md` Quick Index deterministically to resolve merge conflicts
 
 ---
 

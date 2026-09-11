@@ -227,13 +227,13 @@ The graph is designed to minimize merge conflicts on teams:
 - **Multi-node files** (`invariants.md`, `regressions.md`, `decisions.md`, `watchlists.md`) — each node is a self-contained block separated by `---`, and `core/.gitattributes` marks these files `merge=union`. Two branches that each **append a new node at the bottom** merge cleanly with no conflict — union merge keeps both additions. (Union can't resolve two edits to the *same* node; the per-graph lock handles that on a shared checkout, and duplicate IDs are caught below.)
 - **`graph_index.md`** — the Quick Index is derived, so don't hand-resolve a conflict here. Accept either side of the conflict (or take `--theirs`/`--ours`), then run `sg reindex` to rebuild it from the node files. Because the output is sorted and order-independent, both contributors end up with byte-identical indexes.
 - **Concurrent writers on one checkout** — when two agent sessions share a working copy (not separate branches), the MCP server serializes their writes with a per-graph lock and writes atomically, so a lost `REGRESSED_N_TIMES` increment or a torn file can't happen. No manual coordination needed.
-- **Duplicate IDs** — if a merge lands two nodes with the same ID (each branch minted it independently), `consistency_check.sh` fails and names the ID. Rename one or merge the two blocks, then `sg reindex`.
-- **After any graph merge:** run `sg reindex` (rebuild the index) then `core/scripts/consistency_check.sh` (catch duplicate IDs and broken edges union may have left).
+- **Duplicate IDs** — if a merge lands two nodes with the same ID (each branch minted it independently), `sg check` (or `consistency_check.sh`) fails and names the ID. Rename one or merge the two blocks, then `sg reindex`.
+- **After any graph merge:** run `sg reindex` (rebuild the index) then `sg check` (or `core/scripts/consistency_check.sh`) to catch duplicate IDs and broken edges union may have left.
 - **Scratchpad** (`core/.scratchpad.md`) — gitignored, so never conflicts.
 
 **Propagation:** a node you record on a feature branch reaches other agents only when that branch merges. Commit graph updates in the same commit as the code and land them promptly, and `git fetch` before starting parallel work so you begin from the current graph. The graph is a git artifact — it propagates exactly as fast as your branches merge, no faster.
 
-**Trust boundary — `shared/`:** a node in the shared (org-level) graph is loaded by *every* repo and agent, so a wrong one becomes org-wide law. The MCP server is **read-only** against `shared/`: no agent can write it, so promoting a node there is always a deliberate human act (copy the node into `shared/`, commit, review). Stamp an `**Author:**` when you promote — `consistency_check.sh` auto-detects a sibling `shared/` graph, validates its IDs and edges alongside `core/`, and warns on any shared node with no attribution (an org-wide rule with no traceable source). Review shared-graph PRs with more care than per-repo ones.
+**Trust boundary — `shared/`:** a node in the shared (org-level) graph is loaded by *every* repo and agent, so a wrong one becomes org-wide law. The MCP server is **read-only** against `shared/`: no agent can write it, so promoting a node there is always a deliberate human act (copy the node into `shared/`, commit, review). Stamp an `**Author:**` when you promote — `sg check` / `consistency_check.sh` auto-detects a sibling `shared/` graph, validates its IDs and edges alongside `core/`, and warns on any shared node with no attribution (an org-wide rule with no traceable source). Review shared-graph PRs with more care than per-repo ones.
 
 > **Large teams (5+ contributors):** If multi-node files still cause frequent conflicts,
 > split them into per-node files using the same pattern as `components/`:
@@ -267,13 +267,15 @@ index, then loads specific detail files. Each step is small. This scales indefin
 
 ---
 
-## Verification Scripts
+## Verification Commands
 
 ```bash
-# Consistency check — verify no broken edge references
-bash core/scripts/consistency_check.sh
+# Consistency check — verify no broken edge references or duplicate IDs
+sg check                          # cross-platform CLI
+bash core/scripts/consistency_check.sh # or bash script
 
-# Stale check — flag old nodes and dead file references
+# Stale check — flag old nodes and dead file/path/symbol references
+sg stale                          # cross-platform CLI
 bash core/scripts/stale_check.sh [CORE_DIR] [MAX_AGE_DAYS]
 
 # Auto-map — generate structural repo map (requires ctags)

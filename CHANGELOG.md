@@ -4,6 +4,22 @@
 
 ### Added
 
+- **Antigravity support, rebuilt for 2.x as a native workspace plugin.** The old adapter
+  was deprecated — it relied on a project-local `.agent/skills/memory/SKILL.md` with the index
+  embedded and a `.antigravityrules` `view_file` mandate, all of which moved or were removed
+  in Antigravity 2.x. The revived adapter packages an official Antigravity 2.x Plugin at
+  `.agents/plugins/simplegraph/` bundling `plugin.json` manifest, plugin rules in
+  `rules/AGENTS.md`, a clean progressive-disclosure `skills/simplegraph/SKILL.md`, a `Stop`
+  hook in `hooks.json`, and an MCP config at `mcp_config.json`. `setup.sh --tool antigravity`
+  installs the plugin, updates root `AGENTS.md`, cleans up legacy 1.x artifacts, and wires
+  the server.
+- **Cross-platform TypeScript CLI (`sg`) & Windows native compliance.** Implemented pure
+  TypeScript replacements for all utility scripts inside `mcp/src/`:
+  `sg check` (`check.ts`) replacing `consistency_check.sh`, `sg stale` (`stale.ts`) replacing
+  `stale_check.sh`, and `sg hook require-doc` (`hook.ts`) replacing `require_documentation.sh`.
+  Windows developers can run the full suite natively via PowerShell/CMD without requiring WSL
+  or POSIX tools. Existing bash scripts now feature dual-engine execution: automatically delegating
+  to Node if built, with full POSIX shell fallback for minimal CI environments.
 - **Force capture — the "document before you finish" Stop hook.** CI enforces
   that the graph is *valid* (no broken edges, no duplicate IDs); it can't enforce
   that new knowledge was *recorded* — nothing in a diff says "this fix deserved a

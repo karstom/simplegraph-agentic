@@ -61,8 +61,8 @@ file beneath it, including files that didn't exist when the node was written. Ke
 it to Components is deliberate — directory ownership on a Regression would fire on
 every unrelated edit in the area and train the agent to ignore the tool.
 
-`scripts/stale_check.sh` checks both: `Paths` that are no longer directories, and
-`Symbols` absent from `auto_map.md`.
+`sg stale` (and `scripts/stale_check.sh`) checks both: `Paths` that are no longer directories, and
+`Symbols` absent from source files or `auto_map.md`.
 
 The `check_files` response is budgeted so a widened radius can't flood the context:
 full records for the top-ranked direct hits, one-line digests for the rest, capped
