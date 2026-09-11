@@ -1,0 +1,4 @@
+{
+  "name": "simplegraph",
+  "description": "Persistent memory graph preventing regression loops and enforcing architectural invariants."
+}

@@ -17,6 +17,9 @@ import { buildContext, DEFAULT_COMPONENT_DENYLIST } from "./mine.js";
 import { assembleBundle } from "./bundle.js";
 import { mergeBundle, readState, DRAFT_FILE } from "./merge.js";
 import { regenerateIndex } from "../reindex.js";
+import { runCheck } from "../check.js";
+import { runStaleCheck } from "../stale.js";
+import { runRequireDocHook } from "../hook.js";
 import {
   DEFAULT_MAX_COMMITS, DEFAULT_MAX_PER_TYPE, DEFAULT_MIN_CONFIDENCE,
   NODE_TYPES, SEED_VERSION,
@@ -152,6 +155,192 @@ export async function runReindex(argv: string[]): Promise<number> {
   for (const r of result.rows) process.stdout.write(`    ${r.label.padEnd(26)} ${r.count}\n`);
   for (const w of result.warnings) process.stdout.write(`    ⚠ ${w}\n`);
   return 0;
+}
+
+const CHECK_USAGE = `sg check [PATH] [--graph <path>] [--shared <path>] — verify memory graph consistency
+
+Verifies:
+  • No duplicate node IDs (across core/ and shared/)
+  • No broken edge references (every → TARGET resolves)
+  • Shared graph attribution (advisory warning on un-attributed nodes in shared/)
+
+Usage:
+  sg check [PATH] [options]    PATH: repo root (default: cwd; graph defaults to PATH/core)
+
+Options:
+  --graph <path>    path to core/ directory
+  --shared <path>   path to shared/ directory (default: sibling of core/)
+  -h, --help        show this help
+`;
+
+export async function runCheckCli(argv: string[]): Promise<number> {
+  const args = [...argv];
+  let repoPath = process.cwd();
+  let graphRoot = "";
+  let sharedRoot: string | null = null;
+  while (args.length) {
+    const a = args.shift()!;
+    if (a === "-h" || a === "--help") { process.stdout.write(CHECK_USAGE); return 0; }
+    if (a === "--graph") {
+      const v = args.shift();
+      if (v === undefined) throw new Error("--graph requires a value");
+      graphRoot = path.resolve(v);
+    } else if (a === "--shared") {
+      const v = args.shift();
+      if (v === undefined) throw new Error("--shared requires a value");
+      sharedRoot = path.resolve(v);
+    } else if (a.startsWith("-")) {
+      throw new Error(`Unknown option: ${a}\n\n${CHECK_USAGE}`);
+    } else {
+      repoPath = path.resolve(a);
+    }
+  }
+  if (!graphRoot) {
+    if (process.env.SIMPLEGRAPH_ROOT) {
+      graphRoot = path.resolve(process.env.SIMPLEGRAPH_ROOT);
+    } else {
+      graphRoot = path.join(repoPath, "core");
+    }
+  }
+  if (!sharedRoot && process.env.SIMPLEGRAPH_SHARED) {
+    sharedRoot = path.resolve(process.env.SIMPLEGRAPH_SHARED);
+  }
+
+  if (!fs.existsSync(graphRoot)) {
+    process.stderr.write(`core directory not found at ${graphRoot}.\n`);
+    return 1;
+  }
+
+  const result = runCheck({ graphRoot, sharedRoot });
+  process.stdout.write(result.output + "\n");
+  return result.ok ? 0 : 1;
+}
+
+const STALE_USAGE = `sg stale [PATH] [--graph <path>] [--days <n>] — detect stale or missing graph references
+
+Checks for:
+  • Nodes with LastUpdated older than MAX_AGE_DAYS (default: 90)
+  • Nodes referencing file paths that no longer exist on disk
+  • Nodes owning **Paths:** directories that no longer exist
+  • Nodes anchored to **Symbols:** absent from auto_map.md (if present)
+
+Usage:
+  sg stale [PATH] [options]    PATH: repo root (default: cwd; graph defaults to PATH/core)
+
+Options:
+  --graph <path>    path to core/ directory
+  --days <n>        max age in days before warning (default: 90)
+  -h, --help        show this help
+`;
+
+export async function runStaleCli(argv: string[]): Promise<number> {
+  const args = [...argv];
+  let repoPath = process.cwd();
+  let graphRoot = "";
+  let maxAgeDays = 90;
+  while (args.length) {
+    const a = args.shift()!;
+    if (a === "-h" || a === "--help") { process.stdout.write(STALE_USAGE); return 0; }
+    if (a === "--graph") {
+      const v = args.shift();
+      if (v === undefined) throw new Error("--graph requires a value");
+      graphRoot = path.resolve(v);
+    } else if (a === "--days") {
+      const v = args.shift();
+      if (v === undefined) throw new Error("--days requires a value");
+      maxAgeDays = parseInt(v, 10);
+    } else if (a.startsWith("-")) {
+      throw new Error(`Unknown option: ${a}\n\n${STALE_USAGE}`);
+    } else {
+      repoPath = path.resolve(a);
+    }
+  }
+  if (!graphRoot) {
+    if (process.env.SIMPLEGRAPH_ROOT) {
+      graphRoot = path.resolve(process.env.SIMPLEGRAPH_ROOT);
+    } else {
+      graphRoot = path.join(repoPath, "core");
+    }
+  }
+
+  if (!fs.existsSync(graphRoot)) {
+    process.stderr.write(`core directory not found at ${graphRoot}.\n`);
+    return 1;
+  }
+
+  const result = runStaleCheck({ graphRoot, repoRoot: repoPath, maxAgeDays });
+  process.stdout.write(result.output + "\n");
+  return result.ok ? 0 : 1;
+}
+
+const HOOK_USAGE = `sg hook <name> [options] — run agent lifecycle hooks
+
+Hooks:
+  require-doc    "Document before you finish" Stop hook check
+
+Usage:
+  sg hook require-doc [--graph <path>] [--repo <path>]
+  -h, --help     show this help
+`;
+
+async function readStdin(): Promise<string> {
+  if (process.stdin.isTTY) return "";
+  return new Promise((resolve) => {
+    let data = "";
+    const timer = setTimeout(() => {
+      resolve(data);
+    }, 100);
+    process.stdin.setEncoding("utf-8");
+    process.stdin.on("data", (chunk) => {
+      data += chunk;
+    });
+    process.stdin.on("end", () => {
+      clearTimeout(timer);
+      resolve(data);
+    });
+    process.stdin.on("error", () => {
+      clearTimeout(timer);
+      resolve("");
+    });
+  });
+}
+
+export async function runHookCli(argv: string[]): Promise<number> {
+  const args = [...argv];
+  const hookName = args.shift();
+  if (!hookName || hookName === "-h" || hookName === "--help") {
+    process.stdout.write(HOOK_USAGE);
+    return hookName ? 0 : 1;
+  }
+
+  if (hookName === "require-doc" || hookName === "require_documentation") {
+    let graphRoot: string | undefined;
+    let repoRoot: string | undefined;
+    while (args.length) {
+      const a = args.shift()!;
+      if (a === "--graph") {
+        const v = args.shift();
+        if (v === undefined) throw new Error("--graph requires a value");
+        graphRoot = path.resolve(v);
+      } else if (a === "--repo") {
+        const v = args.shift();
+        if (v === undefined) throw new Error("--repo requires a value");
+        repoRoot = path.resolve(v);
+      } else if (a === "-h" || a === "--help") {
+        process.stdout.write(HOOK_USAGE);
+        return 0;
+      }
+    }
+    const stdinPayload = await readStdin();
+    const result = runRequireDocHook({ graphRoot, repoRoot, stdinPayload });
+    if (result.decision === "block") {
+      process.stdout.write(JSON.stringify(result) + "\n");
+    }
+    return 0;
+  }
+
+  process.stderr.write(`Unknown hook: ${hookName}\n\n${HOOK_USAGE}`);
+  return 1;
 }
 
 function bar(confidence: number): string {
@@ -293,13 +482,22 @@ if (/\b(sg|cli)(\.js|\.ts)?$/.test(path.basename(invoked))) {
     process.stdout.write(
       `sg — simplegraph CLI\n\nCommands:\n` +
       `  seed     ${USAGE.split("\n")[0]}\n` +
-      `  reindex  ${REINDEX_USAGE.split("\n")[0]}\n\n${USAGE}`
+      `  reindex  ${REINDEX_USAGE.split("\n")[0]}\n` +
+      `  check    ${CHECK_USAGE.split("\n")[0]}\n` +
+      `  stale    ${STALE_USAGE.split("\n")[0]}\n` +
+      `  hook     ${HOOK_USAGE.split("\n")[0]}\n\n${USAGE}`
     );
     process.exit(command ? 0 : 1);
   } else if (command === "seed") {
     runSeed(rest).then(code => process.exit(code)).catch(runFail);
   } else if (command === "reindex") {
     runReindex(rest).then(code => process.exit(code)).catch(runFail);
+  } else if (command === "check") {
+    runCheckCli(rest).then(code => process.exit(code)).catch(runFail);
+  } else if (command === "stale") {
+    runStaleCli(rest).then(code => process.exit(code)).catch(runFail);
+  } else if (command === "hook") {
+    runHookCli(rest).then(code => process.exit(code)).catch(runFail);
   } else {
     process.stderr.write(`Unknown command: ${command}\n\n${USAGE}`);
     process.exit(1);
