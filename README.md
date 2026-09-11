@@ -28,7 +28,7 @@ another place that re-stamps the flag; none removed the ambiguity.
 **Files:** `src/auth/session.ts`, `src/auth/keystore.ts`
 ```
 
-That node is real — six recurrences on a production codebase, anonymized here. Without it, the agent confidently writes fix number seven, in a seventh location. With it, the agent knows the shape of the trap before it steps in.
+That node is real — multiple recurrences on a production codebase, anonymized here. Without the graph, the agent confidently writes fix number seven, in a seventh location. With this data, the agent knows the shape of the trap before it steps in.
 
 **That is the whole thing.** It's as simple as possible on purpose. Read below to learn how to use it for your projects.
 
