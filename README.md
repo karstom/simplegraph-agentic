@@ -108,7 +108,7 @@ an exact join on the path and symbol the agent is *already* editing.
 For example: Your agent adds a logging call to `IdentityService.ts`. Semantic
 search on *"add logging to identity service"* will not surface a node about the reason for the logging - a
 user badge that reappeared after every deploy when it should not have. Searching instead for a path key surfaces the issue directly
-— fourth recurrence, root cause attached.
+— sixth recurrence, root cause attached.
 
 **Semantic search needs the agent to remember to ask. This fires because the agent opened
 a file.**
