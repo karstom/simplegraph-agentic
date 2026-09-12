@@ -155,14 +155,32 @@ Three hops tell your agent what is fragile here and why.
 | Tool | Installed to |
 |---|---|
 | Antigravity | `.agents/plugins/simplegraph/` + `AGENTS.md` |
-| Claude Code | `CLAUDE.md` + `.mcp.json` (MCP server) |
-| Cursor | `.cursor/rules/memory.mdc` |
-| GitHub Copilot | `.github/copilot-instructions.md` |
-| Zed | `.zed/rules/memory.md` + context server |
+| Claude Code | `CLAUDE.md` + `.mcp.json` + `.claude/settings.json` (Stop hook) |
+| Cursor | `.cursor/rules/memory.mdc` + `.cursor/mcp.json` |
+| GitHub Copilot | `.github/copilot-instructions.md` + `.vscode/mcp.json` |
+| Zed | `.zed/rules/memory.md` + `.zed/settings.json` context server |
 | Codex CLI | `AGENTS.md` + `.codex/config.toml` |
 | Anything else | Generic adapter for custom instructions |
 
 The installer picks the right one automatically. With the MCP server, the agent gets thirteen tools — the three that matter day to day being `simplegraph_check_files` before an edit, `simplegraph_anti_patterns` before generating code, and `simplegraph_add_node` after a fix. See [`mcp/README.md`](mcp/README.md).
+
+### Determinism & enforcement by tool
+
+Different coding agents provide different levels of enforcement. **simplegraph** supports three tiers depending on the host platform:
+
+| Tool | Session-start context | Mid-task safety (MCP) | Turn-end gate (Stop hook) | Enforcement level |
+|---|---|---|---|---|
+| **Antigravity** | `.agents/plugins/simplegraph/rules/` + `AGENTS.md` | `.agents/plugins/simplegraph/mcp_config.json` | `hooks.json` (`sg hook require-doc`) | **Deterministic** |
+| **Claude Code** | `CLAUDE.md` | `.mcp.json` | `.claude/settings.json` (`sg hook require-doc`) | **Deterministic** |
+| **Cursor** | `.cursor/rules/memory.mdc` (`alwaysApply: true`) | `.cursor/mcp.json` | _(Not supported by tool)_ | **Advisory (MCP-backed)** |
+| **Zed** | `.zed/rules/memory.md` | `.zed/settings.json` context server | _(Not supported by tool)_ | **Advisory (MCP-backed)** |
+| **Codex CLI** | `AGENTS.md` | `.codex/config.toml` | _(Not supported by tool)_ | **Advisory (MCP-backed)** |
+| **GitHub Copilot** | `.github/copilot-instructions.md` | `.vscode/mcp.json` | _(Not supported by tool)_ | **Advisory (MCP-backed)** |
+| **Generic** | Custom instructions | Manual config | _(Not supported by tool)_ | **Passive** |
+
+- **Deterministic:** The agent is gated by active lifecycle hooks (`Stop`). If a HIGH-priority danger zone was touched without updating the memory graph, the agent is blocked and reminded to document before finishing.
+- **Advisory (MCP-backed):** The agent is equipped with MCP tools for checking regressions and updating nodes, but enforcement is prompt-driven (the model decides when to query).
+- **Passive:** Relies on custom prompt instructions and manual file reading.
 
 ---
 

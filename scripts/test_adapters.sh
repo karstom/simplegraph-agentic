@@ -141,7 +141,7 @@ fi
 section "Cursor install test (setup.sh option 2)"
 TMPDIR_CU=$(mktemp -d /tmp/sg_test_cu.XXXXXX)
 trap "rm -rf ${TMPDIR_CU}" EXIT
-printf "n\n2\n" | bash "${REPO_DIR}/setup.sh" "${TMPDIR_CU}" > /dev/null 2>&1
+printf "n\n2\ny\n" | bash "${REPO_DIR}/setup.sh" "${TMPDIR_CU}" > /dev/null 2>&1
 if [ -f "${TMPDIR_CU}/.cursor/rules/memory.mdc" ]; then
   pass "Cursor: memory.mdc installed at .cursor/rules/"
 else
@@ -155,15 +155,27 @@ else
   fail "Cursor: alwaysApply: true is missing — rule won't load automatically"
 fi
 
+if [ -f "${TMPDIR_CU}/.cursor/mcp.json" ]; then
+  pass "Cursor: .cursor/mcp.json written with MCP config"
+else
+  fail "Cursor: .cursor/mcp.json missing"
+fi
+
 # ── Copilot adapter install ────────────────────────────────────────────────────
 section "Copilot install test (setup.sh option 4)"
 TMPDIR_CP=$(mktemp -d /tmp/sg_test_cp.XXXXXX)
 trap "rm -rf ${TMPDIR_CP}" EXIT
-printf "n\n4\n" | bash "${REPO_DIR}/setup.sh" "${TMPDIR_CP}" > /dev/null 2>&1
+printf "n\n4\ny\n" | bash "${REPO_DIR}/setup.sh" "${TMPDIR_CP}" > /dev/null 2>&1
 if [ -f "${TMPDIR_CP}/.github/copilot-instructions.md" ]; then
   pass "Copilot: copilot-instructions.md installed at .github/"
 else
   fail "Copilot: copilot-instructions.md not found"
+fi
+
+if [ -f "${TMPDIR_CP}/.vscode/mcp.json" ]; then
+  pass "Copilot: .vscode/mcp.json written with MCP config"
+else
+  fail "Copilot: .vscode/mcp.json missing"
 fi
 
 # ── Scripts exist and are executable ─────────────────────────────────────────
@@ -236,6 +248,9 @@ fi
                                || fail "flags did not install CLAUDE.md"
 [ -d "${TMPDIR_NI}/core" ]      && pass "flags installed the graph" \
                                || fail "flags did not install core/"
+[ -f "${TMPDIR_NI}/.claude/settings.json" ] && grep -q '"Stop"' "${TMPDIR_NI}/.claude/settings.json" \
+  && pass "Claude Code Stop hook wired by default under --yes" \
+  || fail "Claude Code Stop hook missing from .claude/settings.json"
 
 section "Non-interactive install (no terminal)"
 TMPDIR_CI=$(mktemp -d /tmp/sg_test_ci.XXXXXX)

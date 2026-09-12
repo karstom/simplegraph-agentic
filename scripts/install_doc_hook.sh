@@ -9,11 +9,19 @@ set -euo pipefail
 TARGET="${1:-$(pwd)}"
 SETTINGS="${TARGET}/.claude/settings.json"
 HOOK_REL='core/scripts/require_documentation.sh'
-# $CLAUDE_PROJECT_DIR is expanded by Claude Code at hook-run time, so the hook
-# works regardless of the cwd the agent is launched from.
-HOOK_CMD='bash "$CLAUDE_PROJECT_DIR"/'"${HOOK_REL}"
+CLI_DIST="${2:-}"
 
-if [ ! -f "${TARGET}/${HOOK_REL}" ]; then
+# If an explicit CLI path was passed and exists, prefer node for cross-platform support.
+# Otherwise fallback to bash with $CLAUDE_PROJECT_DIR.
+if [ -n "${CLI_DIST}" ] && [ -f "${CLI_DIST}" ]; then
+  HOOK_CMD="node \"${CLI_DIST}\" hook require-doc"
+elif [ -f "${TARGET}/mcp/dist/seed/cli.js" ]; then
+  HOOK_CMD="node \"\$CLAUDE_PROJECT_DIR\"/mcp/dist/seed/cli.js hook require-doc"
+else
+  HOOK_CMD='bash "$CLAUDE_PROJECT_DIR"/'"${HOOK_REL}"
+fi
+
+if [ ! -f "${TARGET}/${HOOK_REL}" ] && [ ! -f "${TARGET}/mcp/dist/seed/cli.js" ] && [ -z "${CLI_DIST}" ]; then
   echo "! Hook script not found at ${TARGET}/${HOOK_REL}"
   echo "  Run setup.sh first (it copies the maintenance scripts into core/scripts/)."
   exit 1
@@ -33,9 +41,9 @@ except (FileNotFoundError, ValueError):
 
 stop = cfg.setdefault("hooks", {}).setdefault("Stop", [])
 
-# Idempotent: bail if any Stop hook already runs our script.
+# Idempotent: bail if any Stop hook already runs our script or CLI.
 already = any(
-    "require_documentation.sh" in h.get("command", "")
+    ("require_documentation.sh" in h.get("command", "") or "hook require-doc" in h.get("command", ""))
     for group in stop if isinstance(group, dict)
     for h in group.get("hooks", []) if isinstance(h, dict)
 )
