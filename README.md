@@ -49,7 +49,7 @@ curl -fsSL https://raw.githubusercontent.com/karstom/simplegraph-agentic/main/in
 less install.sh && bash install.sh
 ```
 
-Options: `--tool antigravity`, `--tool cursor`, `--dir path/to/project`, `--no-mcp`, `--yes`. Through a pipe, pass them with `bash -s --`. Re-run the same command to upgrade. Supported on Linux, WSL, and macOS.
+Options: `--tool antigravity` (or comma-separated `--tool antigravity,claude-code`), `--tool cursor`, `--dir path/to/project`, `--no-mcp`, `--yes`. Through a pipe, pass them with `bash -s --`. Re-run the same command to upgrade. Supported on Linux, WSL, and macOS.
 
 **On Windows (PowerShell / CMD):**
 Clone the repository and install the cross-platform Node CLI:
@@ -162,7 +162,7 @@ Three hops tell your agent what is fragile here and why.
 | Codex CLI | `AGENTS.md` + `.codex/config.toml` |
 | Anything else | Generic adapter for custom instructions |
 
-The installer picks the right one automatically. With the MCP server, the agent gets thirteen tools — the three that matter day to day being `simplegraph_check_files` before an edit, `simplegraph_anti_patterns` before generating code, and `simplegraph_add_node` after a fix. See [`mcp/README.md`](mcp/README.md).
+The installer picks the right one automatically (or pass multiple comma-separated tools, e.g. `--tool antigravity,claude-code` or interactive choices `1,3`). With the MCP server, the agent gets thirteen tools — the three that matter day to day being `simplegraph_check_files` before an edit, `simplegraph_anti_patterns` before generating code, and `simplegraph_add_node` after a fix. See [`mcp/README.md`](mcp/README.md).
 
 ### Determinism & enforcement by tool
 

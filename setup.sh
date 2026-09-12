@@ -7,6 +7,7 @@
 # Options (all optional — omit them for the interactive flow):
 #   --tool NAME     antigravity|cursor|claude-code|copilot|zed|codex|generic|skip
 #                   Default: auto-detected from the target project.
+#                   Supports comma-separated tools (e.g. antigravity,claude-code).
 #   --multi-repo    also install the shared/ org-level scaffold
 #   --mcp           answer yes to every "generate MCP config?" prompt
 #   --no-mcp        answer no to them
@@ -58,10 +59,13 @@ TARGET="${TARGET:-$(pwd)}"
 # Map --tool names to the menu numbers used below, so the flag and the
 # interactive menu can never drift apart.
 tool_to_choice() {
-  case "$1" in
+  local t
+  t="$(echo "$1" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+  case "$t" in
     antigravity) echo 1 ;; cursor)  echo 2 ;; claude-code|claude) echo 3 ;;
     copilot)     echo 4 ;; zed)     echo 5 ;; codex|codex-cli)    echo 6 ;;
     generic)     echo 7 ;; skip|none) echo 8 ;;
+    1|2|3|4|5|6|7|8) echo "$t" ;;
     *) echo "" ;;
   esac
 }
@@ -80,14 +84,37 @@ detect_tool() {
 }
 
 # Resolve --tool up front so a typo fails immediately, not after files are copied.
+# Accepts single tool or comma-separated list (e.g. antigravity,claude-code).
 PRESET_TOOL_CHOICE=""
 if [ -n "${PRESET_TOOL}" ]; then
-  PRESET_TOOL_CHOICE="$(tool_to_choice "${PRESET_TOOL}")"
-  if [ -z "${PRESET_TOOL_CHOICE}" ]; then
-    echo "ERROR: unknown --tool '${PRESET_TOOL}'" >&2
-    echo "       expected one of: antigravity cursor claude-code copilot zed codex generic skip" >&2
-    exit 2
+  IFS=',' read -ra ADAPTER_LIST <<< "${PRESET_TOOL}"
+  resolved_choices=()
+  for item in "${ADAPTER_LIST[@]}"; do
+    c="$(tool_to_choice "${item}")"
+    if [ -z "${c}" ]; then
+      echo "ERROR: unknown --tool '${item}'" >&2
+      echo "       expected one of: antigravity cursor claude-code copilot zed codex generic skip" >&2
+      exit 2
+    fi
+    already_added=false
+    for existing in ${resolved_choices[@]+"${resolved_choices[@]}"}; do
+      if [ "${existing}" = "${c}" ]; then
+        already_added=true
+        break
+      fi
+    done
+    if [ "${already_added}" = false ]; then
+      resolved_choices+=("${c}")
+    fi
+  done
+  if [ ${#resolved_choices[@]} -gt 1 ]; then
+    filtered_choices=()
+    for c in "${resolved_choices[@]}"; do
+      [ "${c}" != "8" ] && filtered_choices+=("${c}")
+    done
+    resolved_choices=("${filtered_choices[@]}")
   fi
+  PRESET_TOOL_CHOICE=$(IFS=,; echo "${resolved_choices[*]}")
 fi
 
 DETECTED_TOOL="$(detect_tool)"
@@ -330,11 +357,42 @@ if [ -n "${DETECTED_TOOL}" ] && [ -z "${PRESET_TOOL_CHOICE}" ]; then
   echo ""
   echo "  Detected ${bold}${DETECTED_TOOL}${reset} in this project — press enter to accept."
 fi
+echo ""
+echo "  Tip: Enter multiple comma-separated choices to configure multiple tools (e.g. 1,3)"
 ask "Choice [1-8]:"
-answer adapter_choice "${DETECTED_CHOICE:-8}" "${PRESET_TOOL_CHOICE}"
-adapter_choice="${adapter_choice:-${DETECTED_CHOICE:-8}}"
+answer raw_adapter_choice "${DETECTED_CHOICE:-8}" "${PRESET_TOOL_CHOICE}"
+raw_adapter_choice="${raw_adapter_choice:-${DETECTED_CHOICE:-8}}"
 
-case "${adapter_choice}" in
+ADAPTER_CHOICES=()
+IFS=',' read -ra SPLIT_CHOICES <<< "${raw_adapter_choice}"
+for choice_item in "${SPLIT_CHOICES[@]}"; do
+  c="$(tool_to_choice "${choice_item}")"
+  if [ -n "${c}" ]; then
+    already_added=false
+    for existing in ${ADAPTER_CHOICES[@]+"${ADAPTER_CHOICES[@]}"}; do
+      if [ "${existing}" = "${c}" ]; then
+        already_added=true
+        break
+      fi
+    done
+    if [ "${already_added}" = false ]; then
+      ADAPTER_CHOICES+=("${c}")
+    fi
+  fi
+done
+if [ ${#ADAPTER_CHOICES[@]} -gt 1 ]; then
+  filtered_choices=()
+  for c in "${ADAPTER_CHOICES[@]}"; do
+    [ "${c}" != "8" ] && filtered_choices+=("${c}")
+  done
+  ADAPTER_CHOICES=("${filtered_choices[@]}")
+fi
+if [ ${#ADAPTER_CHOICES[@]} -eq 0 ]; then
+  ADAPTER_CHOICES=("${DETECTED_CHOICE:-8}")
+fi
+
+for adapter_choice in "${ADAPTER_CHOICES[@]}"; do
+  case "${adapter_choice}" in
   1)
     # Antigravity 2.x: Installs the native Antigravity Plugin (.agents/plugins/simplegraph/)
     # and the session-start rule into AGENTS.md.
@@ -764,7 +822,8 @@ EOF
   *)
     warn "Skipped adapter install. See adapters/ to install manually later."
     ;;
-esac
+  esac
+done
 
 # ── consistency check ─────────────────────────────────────────────────────────
 echo ""
