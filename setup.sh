@@ -213,7 +213,7 @@ PYEOF
 # the authority on what counts as a node. Duplicated rather than sourced because
 # setup.sh must run standalone, before anything is installed.
 count_nodes() {
-  find "$1" -name '*.md' -not -name 'auto_map.md' -not -name '.scratchpad.md' 2>/dev/null \
+  find "$1" -name '*.md' -not -name 'auto_map.md' -not -name '.scratchpad.md' -not -path '*/archive/*' -not -path '*/generated/*' 2>/dev/null \
     | sort | while IFS= read -r f; do
         awk '
           /^[[:space:]]*(```|~~~)/ { fence = !fence; next }

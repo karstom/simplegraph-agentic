@@ -113,9 +113,9 @@ echo "  ≈ Tokens:  ${TASK_TOKENS}"
 echo ""
 
 # ── 4. Full graph (everything — theoretical max, never loaded) ────────────────
-ALL_WORDS=$(count_tokens $(find "${CORE_DIR}" -name '*.md' -not -name 'auto_map.md' -not -name '.scratchpad.md'))
+ALL_WORDS=$(count_tokens $(find "${CORE_DIR}" -name '*.md' -not -name 'auto_map.md' -not -name '.scratchpad.md' -not -path '*/archive/*' -not -path '*/generated/*'))
 ALL_TOKENS=$(fmt_tokens "$ALL_WORDS")
-ALL_FILES=$(find "${CORE_DIR}" -name '*.md' -not -name 'auto_map.md' -not -name '.scratchpad.md' | wc -l)
+ALL_FILES=$(find "${CORE_DIR}" -name '*.md' -not -name 'auto_map.md' -not -name '.scratchpad.md' -not -path '*/archive/*' -not -path '*/generated/*' | wc -l)
 
 echo "─── Full Graph (theoretical max — never loaded at once) ──────────"
 echo "  Files:     ${ALL_FILES}"

@@ -91,7 +91,14 @@ export function parseNodes(content: string, sourceFile: string): GraphNode[] {
     if (!idMatch) return [];
 
     const get = (field: string): string =>
-      section.match(new RegExp(`\\*\\*${field}:\\*\\*\\s*(.+)`))?.[1]?.trim() ?? "";
+      section.match(new RegExp(`\\*\\*${field}:\\*\\*[ \\t]*(.+)`))?.[1]?.trim() ?? "";
+
+    const getBlock = (field: string): string => {
+      const m = section.match(
+        new RegExp(`\\*\\*${field}:\\*\\*[ \\t]*([\\s\\S]*?)(?=\\r?\\n\\*\\*[A-Za-z]|\\r?\\n---|$)`)
+      );
+      return m ? m[1].trim() : "";
+    };
 
     // Edges block: lines between **Edges:** and the next **Field:** or --- or end of string
     const edgesBlock =
@@ -135,7 +142,7 @@ export function parseNodes(content: string, sourceFile: string): GraphNode[] {
       type: get("Type"),
       priority: get("Priority"),
       label: get("Label"),
-      summary: get("Summary"),
+      summary: getBlock("Summary"),
       tags,
       regressedNTimes: regressedMatch ? parseInt(regressedMatch[1], 10) : undefined,
       rootCause: rootCauseMatch ? rootCauseMatch[1].trim() : undefined,

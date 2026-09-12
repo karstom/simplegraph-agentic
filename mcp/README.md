@@ -27,14 +27,15 @@ Use both: keep the skill/CLAUDE.md as a session-start summary and use MCP for mi
 | `simplegraph_search` | When looking for context by keyword | Searches IDs, labels, summaries, tags, edges, and file/symbol/path anchors |
 | `simplegraph_get_node` | When you know the exact ID | Returns one node's full raw record — use to expand a digest from `check_files` |
 | `simplegraph_add_node` | After fixing a bug / making a decision | Appends a new node (optionally stamped with `author`/`session`) and regenerates the Quick Index |
-| `simplegraph_update_node` | When a bug recurs | Increments `REGRESSED_N_TIMES`, auto-upgrades priority to HIGH at ≥2 |
+| `simplegraph_update_node` | When a bug recurs or updating fields | Increments `REGRESSED_N_TIMES`, auto-upgrades priority to HIGH at ≥2, or updates/appends fields |
+| `simplegraph_correct_node` | When an existing node was inaccurate | Appends `⚠ CORRECTED <date>: <correction>` to Summary and updates LastUpdated |
 | `simplegraph_reindex` | After a git merge or manual edit | Rebuilds the Quick Index from the node files, deterministically |
 | `simplegraph_archive_regression` | When a bug is permanently fixed | Moves a Regression to the archive and refreshes the index |
 | `simplegraph_scratchpad` | Mid-session, for notes not yet worth a node | Read/append/clear `.scratchpad.md` (gitignored) |
 | `simplegraph_seed_candidates` | Bootstrapping, or when Decisions look thin | Returns commits whose message may record a *why*, for you to judge and write as Decision nodes |
 | `simplegraph_update_index` | Rarely — `add_node` already does it | Regenerates the Quick Index; prefer `simplegraph_reindex` |
 
-Thirteen tools, but only three matter day to day: **`check_files` before an
+Fourteen tools, but only three matter day to day: **`check_files` before an
 edit**, **`anti_patterns` before generating code**, and **`add_node` after a
 fix**. The rest are there when you need them.
 
@@ -79,6 +80,11 @@ npm link          # exposes `sg` globally, or invoke via `node dist/seed/cli.js 
 - **`sg stale [path]`**: Stale reference detector. Flags nodes unmodified for > 90 days (`LastUpdated`), files anchored that no longer exist on disk, directory paths that don't exist, and symbol anchors no longer found in anchored files. Replaces `scripts/stale_check.sh`.
   ```bash
   sg stale /path/to/your/project
+  ```
+
+- **`sg correct <id> <correction> [--date <date>]`**: Record an erratum on an existing node. Appends `⚠ CORRECTED <date>: <correction>` to Summary and updates `LastUpdated`.
+  ```bash
+  sg correct REG_HOT_CACHE "Root cause was Redis TTL, not Postgres index"
   ```
 
 - **`sg hook require-doc [--graph <dir>] [--diff-cmd <cmd>]`**: Pre-commit / Stop hook. Inspects `git diff` against active HIGH-priority Regressions, Invariants, and Watchlists. Reminds the agent to document fixes before completing tasks. Features single-nudge idempotency (`.sg.nudge`) to prevent blocking workflows. Replaces `scripts/require_documentation.sh`.

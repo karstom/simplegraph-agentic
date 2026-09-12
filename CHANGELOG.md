@@ -4,6 +4,20 @@
 
 ### Added
 
+- **`simplegraph_correct_node` MCP tool & `sg correct` CLI command.** Record an erratum
+  or correction on an existing node without rewriting the entire text. Appends
+  `⚠ CORRECTED <date>: <correction>` to `Summary` and updates `LastUpdated`.
+- **`mode: "append"` on `simplegraph_update_node`.** Allows agents to append to text fields
+  like `Summary` (joined with double newline) or list fields like `Files` without rewriting
+  the whole blob.
+- **Blast radius file propagation on invariant violations.** When `simplegraph_add_node`
+  records `VIOLATES → INV_X` (or `VIOLATED_BY → INV_X`), any new files in the violation
+  are automatically merged into `INV_X`'s `Files` list and its `LastUpdated` is updated to today,
+  ensuring invariants dynamically expand their guarded perimeter.
+- **Robust graph root resolution.** If `SIMPLEGRAPH_ROOT` is unset, `mcp/src/index.ts`
+  resolves root via `git rev-parse --show-toplevel`/core (supporting worktrees and subdirectories),
+  logs the resolved root once at startup via `console.error`, and exits with code 1 immediately
+  if the directory does not exist rather than silently running against phantom `$PWD/core`.
 - **Antigravity support, rebuilt for 2.x as a native workspace plugin.** The old adapter
   was deprecated — it relied on a project-local `.agent/skills/memory/SKILL.md` with the index
   embedded and a `.antigravityrules` `view_file` mandate, all of which moved or were removed
@@ -80,6 +94,19 @@
 
 ### Fixed
 
+- **Prose arrows and explanations no longer trigger broken edge errors.** `consistency_check.sh`
+  and `check.ts` now ignore arrows in prose (e.g. `(dashboard → Caching → Purge Everything)`,
+  `no stats block → FAIL`, `(reject → ACCEPT)`), discard explanations after `:`, parse
+  dot-separated multiple targets (`INV_A · INV_B`), and support IDs containing digits
+  (`R2_SHIELD`, `INV_64BYTE_SEED`). Both shell and TS checks ship with canary self-tests.
+- **Clean output and deduplication in stale check.** `stale_check.sh` and `stale.ts` exclude
+  `archive/` and `generated/`, fix `awk` node retention duplication bugs, group and deduplicate
+  findings per node into a clean single line, and default to HIGH-priority nodes (`--all` to
+  inspect MEDIUM/LOW). Fixed root-cause newline regex bug in `parser.ts` where empty `Files`
+  lines swallowed the next field.
+- **`auto_map.md` relocated to `core/generated/auto_map.md`.** Generated structural symbol maps
+  no longer pollute naive grep searches over `core/*.md`. Added `core/generated/` and
+  `shared/generated/` to `.gitignore`, with fallback reading for legacy `core/auto_map.md`.
 - **Installer meta-text leaked into the user's CLAUDE.md / AGENTS.md.** The
   Claude Code and Codex adapters opened with framing meant for a human reading the
   source ("Add this section to your project's `CLAUDE.md` to enable persistent

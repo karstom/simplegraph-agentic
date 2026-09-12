@@ -20,6 +20,7 @@ import { regenerateIndex } from "../reindex.js";
 import { runCheck } from "../check.js";
 import { runStaleCheck } from "../stale.js";
 import { runRequireDocHook } from "../hook.js";
+import { handleCorrectNode } from "../index.js";
 import {
   DEFAULT_MAX_COMMITS, DEFAULT_MAX_PER_TYPE, DEFAULT_MIN_CONFIDENCE,
   NODE_TYPES, SEED_VERSION,
@@ -230,6 +231,7 @@ Usage:
 Options:
   --graph <path>    path to core/ directory
   --days <n>        max age in days before warning (default: 90)
+  --all             check all nodes (default: HIGH-priority nodes only)
   -h, --help        show this help
 `;
 
@@ -238,6 +240,7 @@ export async function runStaleCli(argv: string[]): Promise<number> {
   let repoPath = process.cwd();
   let graphRoot = "";
   let maxAgeDays = 90;
+  let all = false;
   while (args.length) {
     const a = args.shift()!;
     if (a === "-h" || a === "--help") { process.stdout.write(STALE_USAGE); return 0; }
@@ -249,6 +252,8 @@ export async function runStaleCli(argv: string[]): Promise<number> {
       const v = args.shift();
       if (v === undefined) throw new Error("--days requires a value");
       maxAgeDays = parseInt(v, 10);
+    } else if (a === "--all") {
+      all = true;
     } else if (a.startsWith("-")) {
       throw new Error(`Unknown option: ${a}\n\n${STALE_USAGE}`);
     } else {
@@ -268,9 +273,81 @@ export async function runStaleCli(argv: string[]): Promise<number> {
     return 1;
   }
 
-  const result = runStaleCheck({ graphRoot, repoRoot: repoPath, maxAgeDays });
+  const result = runStaleCheck({ graphRoot, repoRoot: repoPath, maxAgeDays, all });
   process.stdout.write(result.output + "\n");
   return result.ok ? 0 : 1;
+}
+
+const CORRECT_USAGE = `sg correct <id> <correction> [options] — record an erratum on an existing node
+
+Appends '⚠ CORRECTED <date>: <correction>' to the node's Summary and updates LastUpdated.
+
+Usage:
+  sg correct <id> <correction> [--date <YYYY-MM-DD>] [--graph <path>]
+
+Options:
+  --date <YYYY-MM-DD>  date of correction (default: today)
+  --graph <path>       path to core/ directory
+  -h, --help           show this help
+`;
+
+export async function runCorrectCli(argv: string[]): Promise<number> {
+  const args = [...argv];
+  let date: string | undefined;
+  let graphRoot = "";
+  let repoPath = process.cwd();
+
+  const positionals: string[] = [];
+  while (args.length) {
+    const a = args.shift()!;
+    if (a === "-h" || a === "--help") { process.stdout.write(CORRECT_USAGE); return 0; }
+    if (a === "--graph") {
+      const v = args.shift();
+      if (v === undefined) throw new Error("--graph requires a value");
+      graphRoot = path.resolve(v);
+    } else if (a === "--date") {
+      const v = args.shift();
+      if (v === undefined) throw new Error("--date requires a value");
+      date = v;
+    } else if (a.startsWith("-")) {
+      throw new Error(`Unknown option: ${a}\n\n${CORRECT_USAGE}`);
+    } else {
+      positionals.push(a);
+    }
+  }
+
+  if (positionals.length < 2) {
+    process.stderr.write(`Error: sg correct requires both <id> and <correction>.\n\n${CORRECT_USAGE}`);
+    return 1;
+  }
+  const id = positionals[0];
+  const correction = positionals.slice(1).join(" ");
+
+  if (!graphRoot) {
+    if (process.env.SIMPLEGRAPH_ROOT) {
+      graphRoot = path.resolve(process.env.SIMPLEGRAPH_ROOT);
+    } else {
+      try {
+        const toplevel = fs.existsSync(path.join(repoPath, ".git")) ? repoPath : "";
+        if (toplevel) graphRoot = path.join(toplevel, "core");
+      } catch {}
+      if (!graphRoot) graphRoot = path.join(repoPath, "core");
+    }
+  }
+
+  if (!fs.existsSync(graphRoot)) {
+    process.stderr.write(`core directory not found at ${graphRoot}.\n`);
+    return 1;
+  }
+
+  const result = handleCorrectNode({ id, correction, date }, graphRoot);
+  const text = (result.content?.[0] as { text?: string })?.text ?? "";
+  if (result.isError) {
+    process.stderr.write(`Error: ${text}\n`);
+    return 1;
+  }
+  process.stdout.write(`${text}\n`);
+  return 0;
 }
 
 const HOOK_USAGE = `sg hook <name> [options] — run agent lifecycle hooks
@@ -485,6 +562,7 @@ if (/\b(sg|cli)(\.js|\.ts)?$/.test(path.basename(invoked))) {
       `  reindex  ${REINDEX_USAGE.split("\n")[0]}\n` +
       `  check    ${CHECK_USAGE.split("\n")[0]}\n` +
       `  stale    ${STALE_USAGE.split("\n")[0]}\n` +
+      `  correct  ${CORRECT_USAGE.split("\n")[0]}\n` +
       `  hook     ${HOOK_USAGE.split("\n")[0]}\n\n${USAGE}`
     );
     process.exit(command ? 0 : 1);
@@ -496,6 +574,8 @@ if (/\b(sg|cli)(\.js|\.ts)?$/.test(path.basename(invoked))) {
     runCheckCli(rest).then(code => process.exit(code)).catch(runFail);
   } else if (command === "stale") {
     runStaleCli(rest).then(code => process.exit(code)).catch(runFail);
+  } else if (command === "correct") {
+    runCorrectCli(rest).then(code => process.exit(code)).catch(runFail);
   } else if (command === "hook") {
     runHookCli(rest).then(code => process.exit(code)).catch(runFail);
   } else {

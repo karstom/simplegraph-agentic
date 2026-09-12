@@ -12,7 +12,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHARED_DIR="${1:-$(dirname "$SCRIPT_DIR")/shared}"
 CONFIG="${SHARED_DIR}/auto_map_config.yaml"
-OUTPUT="${SHARED_DIR}/auto_map.md"
+OUTPUT_DIR="${SHARED_DIR}/generated"
+mkdir -p "${OUTPUT_DIR}"
+OUTPUT="${OUTPUT_DIR}/auto_map.md"
 
 if [ ! -f "${CONFIG}" ]; then
   echo "ERROR: Config not found at ${CONFIG}"
@@ -55,7 +57,14 @@ while IFS= read -r repo_path; do
   mkdir -p "${TEMP_CORE}/core"
   bash "${SCRIPT_DIR}/auto_map.sh" --public-only "${repo_path}" 2>/dev/null || true
 
-  if [ -f "${repo_path}/core/auto_map.md" ]; then
+  REPO_MAP=""
+  if [ -f "${repo_path}/core/generated/auto_map.md" ]; then
+    REPO_MAP="${repo_path}/core/generated/auto_map.md"
+  elif [ -f "${repo_path}/core/auto_map.md" ]; then
+    REPO_MAP="${repo_path}/core/auto_map.md"
+  fi
+
+  if [ -n "${REPO_MAP}" ]; then
     {
       echo ""
       echo "---"
@@ -63,7 +72,7 @@ while IFS= read -r repo_path; do
       echo "# ${REPO_NAME}"
       echo ""
       # Strip the header lines and append the symbols
-      tail -n +5 "${repo_path}/core/auto_map.md"
+      tail -n +5 "${REPO_MAP}"
     } >> "${OUTPUT}"
   fi
 

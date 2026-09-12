@@ -22,9 +22,25 @@ set -euo pipefail
 # broken edge can "resolve" against an unrelated node sharing the truncated stem.
 ID_CLASS='[A-Z][A-Z0-9_]*'
 NODE_RE="^##[[:space:]]*NODE:[[:space:]]*${ID_CLASS}"
-EDGE_RE="→[[:space:]]*${ID_CLASS}"
 STRIP_NODE_PREFIX='s/^##[[:space:]]*NODE:[[:space:]]*//'
-STRIP_EDGE_PREFIX='s/^→[[:space:]]*//'
+
+# Extract edge targets from edge lines only (e.g. - EDGE_TYPE → TARGET: explanation,
+# or - EDGE_TYPE → TARGET1 · TARGET2: explanation).
+# Discards explanations after ':' and ignores prose arrows like (dashboard → Caching).
+extract_edge_targets() {
+  awk '
+    /^[[:space:]]*-([[:space:]]*[A-Za-z0-9_]+[[:space:]]+)?(→|->)/ {
+      line = $0
+      sub(/\r$/, "", line)
+      sub(/:.*$/, "", line)
+      sub(/^[[:space:]]*-([[:space:]]*[A-Za-z0-9_]+[[:space:]]+)?(→|->)[[:space:]]*/, "", line)
+      while (match(line, /[A-Z][A-Z0-9_]*/)) {
+        print substr(line, RSTART, RLENGTH)
+        line = substr(line, RSTART + RLENGTH)
+      }
+    }
+  ' "$1" | sort -u
+}
 
 # Portability: POSIX grep -E / sed / awk only. `grep -P` is absent from BSD/macOS
 # grep, so on a stock Mac every -P call here failed; because each was written as
@@ -42,18 +58,22 @@ grep_or_die() {
 }
 
 # Prove the extraction pipeline works before trusting a clean result from it.
-# Without this, any toolchain problem is indistinguishable from a healthy graph.
+# Verifies:
+#   • node IDs with digits are extracted
+#   • prose arrows in text/summaries are ignored
+#   • arrows in edge explanations after ':' are ignored
+#   • multiple dot-separated targets on one edge line are extracted
 canary() {
   local fixture ids edges
   fixture=$(mktemp "${TMPDIR:-/tmp}/sg_canary.XXXXXX")
-  printf '## NODE: REG_CANARY_1F3A\n**Edges:**\n- CAUSED_BY → INV_CANARY_2B\n' > "$fixture"
+  printf '## NODE: REG_CANARY_1F3A\n**Summary:** cache purge (dashboard → Caching → Purge Everything)\n**Edges:**\n- CAUSED_BY → INV_CANARY_2B · INV_CANARY_3C: explanation → MISSING\n' > "$fixture"
   ids=$(grep_or_die "$NODE_RE" "$fixture" | sed -E "$STRIP_NODE_PREFIX")
-  edges=$(grep_or_die "$EDGE_RE" "$fixture" | sed -E "$STRIP_EDGE_PREFIX")
+  edges=$(extract_edge_targets "$fixture" | tr '\n' ' ' | sed 's/[[:space:]]*$//')
   rm -f "$fixture"
-  if [ "$ids" != "REG_CANARY_1F3A" ] || [ "$edges" != "INV_CANARY_2B" ]; then
+  if [ "$ids" != "REG_CANARY_1F3A" ] || [ "$edges" != "INV_CANARY_2B INV_CANARY_3C" ]; then
     echo "ERROR: consistency check self-test failed — ID extraction is broken." >&2
     echo "       expected node id 'REG_CANARY_1F3A', got '$ids'" >&2
-    echo "       expected edge target 'INV_CANARY_2B', got '$edges'" >&2
+    echo "       expected edge targets 'INV_CANARY_2B INV_CANARY_3C', got '$edges'" >&2
     echo "       Refusing to report a result that would be meaningless." >&2
     exit 2
   fi
@@ -147,8 +167,11 @@ strip_graph() {
     case "$(basename "$f")" in
       auto_map.md|.scratchpad.md) continue ;;
     esac
+    case "$f" in
+      */archive/*|*/generated/*) continue ;;
+    esac
     strip_noise "$f" >> "${out}"
-  done < <(find "$dir" -name '*.md' -not -name 'auto_map.md' -not -name '.scratchpad.md' | sort)
+  done < <(find "$dir" -name '*.md' -not -name 'auto_map.md' -not -name '.scratchpad.md' -not -path '*/archive/*' -not -path '*/generated/*' | sort)
 }
 
 strip_graph "${CORE_DIR}" "${CORE_STRIPPED}"
@@ -157,7 +180,7 @@ cat "${CORE_STRIPPED}" "${SHARED_STRIPPED}" > "${ALL_STRIPPED}"
 
 # Node IDs and edge targets span both graphs, so cross-graph edges
 # (core → shared, shared → core) resolve instead of reading as broken.
-grep_or_die "$EDGE_RE" "${ALL_STRIPPED}" | sed -E "$STRIP_EDGE_PREFIX" | sort -u > "${EDGE_TARGETS}"
+extract_edge_targets "${ALL_STRIPPED}" > "${EDGE_TARGETS}"
 grep_or_die "$NODE_RE" "${ALL_STRIPPED}" | sed -E "$STRIP_NODE_PREFIX" | sort   > "${NODE_IDS}"
 
 STATUS=0

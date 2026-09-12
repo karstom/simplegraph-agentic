@@ -76,6 +76,8 @@ export function runRequireDocHook(options: {
   // Did the agent touch the graph?
   const isDocumented = changedFiles.some(f => {
     if (!f.startsWith(`${coreRel}/`)) return false;
+    const inner = f.slice(coreRel.length + 1);
+    if (inner.startsWith("archive/") || inner.startsWith("generated/")) return false;
     const base = path.basename(f);
     return base !== "auto_map.md" &&
            base !== ".scratchpad.md" &&
@@ -94,7 +96,9 @@ export function runRequireDocHook(options: {
     for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
       const full = path.join(dir, ent.name);
       if (ent.isDirectory()) {
-        collectNodes(full);
+        if (ent.name !== "archive" && ent.name !== "generated") {
+          collectNodes(full);
+        }
       } else if (ent.isFile() && ent.name.endsWith(".md")) {
         const base = ent.name.toLowerCase();
         if (base === "auto_map.md" || base === ".scratchpad.md") continue;
