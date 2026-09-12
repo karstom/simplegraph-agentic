@@ -5,9 +5,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { parseNodes, formatNode } from "./parser.js";
-import { handleUpdateNode, handleAddNode, pathMatches } from "./index.js";
+import { handleUpdateNode, handleAddNode, handleCorrectNode, resolveGraphRoot, pathMatches } from "./index.js";
 import { findNodeBlock } from "./parser.js";
 
 // ── Test helpers ──────────────────────────────────────────────────────────────
@@ -544,4 +544,163 @@ test("a window within the cap draws no note", () => {
   commitWith(repo, "feat: add persistence", WHY, "src/db.ts");
   const text = handleSeedCandidates({ max_commits: 300 }, graphRoot).content[0].text;
   assert.ok(!/Window capped/.test(text));
+});
+
+// ── P2 & P3 Features: Append Mode, Corrections, Blast Radius & Root Resolution ──
+
+test("handleUpdateNode with mode='append' appends to Summary without rewriting the blob", () => {
+  const dir = setupGraph(1);
+  const result = handleUpdateNode(
+    { id: "REG_TEST", field: "Summary", value: "Appended follow-up notes.", mode: "append" },
+    dir
+  );
+  assert.equal(result.isError, undefined);
+  const nodes = parseNodes(readFileSync(join(dir, "regressions.md"), "utf-8"), "regressions.md");
+  assert.equal(
+    nodes[0].summary,
+    "A test regression used in unit tests.\n\nAppended follow-up notes."
+  );
+});
+
+test("handleUpdateNode with mode='append' appends to Files list", () => {
+  const dir = setupGraph(1);
+  const result = handleUpdateNode(
+    { id: "REG_TEST", field: "Files", value: "`src/extra.ts`", mode: "append" },
+    dir
+  );
+  assert.equal(result.isError, undefined);
+  const nodes = parseNodes(readFileSync(join(dir, "regressions.md"), "utf-8"), "regressions.md");
+  assert.deepEqual(nodes[0].files, ["src/test.ts", "src/extra.ts"]);
+});
+
+test("handleCorrectNode appends erratum to Summary and updates LastUpdated", () => {
+  const dir = setupGraph(1);
+  const result = handleCorrectNode(
+    { id: "REG_TEST", correction: "Root cause was Redis TTL, not Postgres index.", date: "2026-09-12" },
+    dir
+  );
+  assert.equal(result.isError, undefined);
+  const nodes = parseNodes(readFileSync(join(dir, "regressions.md"), "utf-8"), "regressions.md");
+  assert.equal(
+    nodes[0].summary,
+    "A test regression used in unit tests.\n\n⚠ CORRECTED 2026-09-12: Root cause was Redis TTL, not Postgres index."
+  );
+  assert.equal(nodes[0].lastUpdated, "2026-09-12");
+});
+
+test("handleCorrectNode fails when node ID does not exist or correction is empty", () => {
+  const dir = setupGraph(1);
+  const errNotFound = handleCorrectNode(
+    { id: "REG_NONEXISTENT", correction: "Some correction" },
+    dir
+  );
+  assert.equal(errNotFound.isError, true);
+  assert.match(errNotFound.content[0].text, /not found/);
+
+  const errEmpty = handleCorrectNode(
+    { id: "REG_TEST", correction: "   " },
+    dir
+  );
+  assert.equal(errEmpty.isError, true);
+  assert.match(errEmpty.content[0].text, /cannot be empty/);
+});
+
+test("handleAddNode propagates blast radius to referenced invariants", () => {
+  const dir = setupEmptyGraph();
+  writeFileSync(
+    join(dir, "invariants.md"),
+    formatNode({
+      id: "INV_AUTH_TOKEN",
+      type: "Invariant",
+      priority: "HIGH",
+      label: "Token Validation",
+      summary: "Tokens must have valid signatures.",
+      tags: ["auth"],
+      files: ["src/auth/jwt.ts"],
+      edges: [],
+      lastUpdated: "2026-01-01",
+    }) + "\n"
+  );
+  writeFileSync(join(dir, "graph_index.md"), "# Index\n");
+
+  const addResult = handleAddNode(
+    {
+      type: "Regression",
+      id: "REG_LEAKED_EXPIRY",
+      label: "Leaked token expiry",
+      summary: "Expired tokens accepted on refresh endpoint.",
+      priority: "HIGH",
+      files: ["src/auth/jwt.ts", "src/routes/refresh.ts"],
+      edges: ["VIOLATES → INV_AUTH_TOKEN: expired tokens bypassed check"],
+    },
+    dir
+  );
+
+  assert.equal(addResult.isError, undefined);
+  assert.match(addResult.content[0].text, /Propagated blast radius/);
+
+  // Invariant should now guard src/routes/refresh.ts as well
+  const invNodes = parseNodes(readFileSync(join(dir, "invariants.md"), "utf-8"), "invariants.md");
+  assert.deepEqual(invNodes[0].files, ["src/auth/jwt.ts", "src/routes/refresh.ts"]);
+  const today = new Date().toISOString().slice(0, 10);
+  assert.equal(invNodes[0].lastUpdated, today);
+});
+
+test("handleAddNode propagates blast radius across dot-separated invariant targets", () => {
+  const dir = setupEmptyGraph();
+  writeFileSync(
+    join(dir, "invariants.md"),
+    formatNode({
+      id: "INV_A",
+      type: "Invariant",
+      priority: "HIGH",
+      label: "Rule A",
+      summary: "Summary A.",
+      tags: [],
+      files: ["src/a.ts"],
+      edges: [],
+      lastUpdated: "2026-01-01",
+    }) +
+    "\n\n---\n\n" +
+    formatNode({
+      id: "INV_B",
+      type: "Invariant",
+      priority: "HIGH",
+      label: "Rule B",
+      summary: "Summary B.",
+      tags: [],
+      files: ["src/b.ts"],
+      edges: [],
+      lastUpdated: "2026-01-01",
+    }) +
+    "\n"
+  );
+  writeFileSync(join(dir, "graph_index.md"), "# Index\n");
+
+  const addResult = handleAddNode(
+    {
+      type: "Regression",
+      id: "REG_MULTI_VIOLATION",
+      label: "Multi violation",
+      summary: "Violates two invariants simultaneously.",
+      priority: "HIGH",
+      files: ["src/shared/service.ts"],
+      edges: ["- VIOLATED_BY → INV_A · INV_B: cross-cutting issue"],
+    },
+    dir
+  );
+
+  assert.equal(addResult.isError, undefined);
+  const invNodes = parseNodes(readFileSync(join(dir, "invariants.md"), "utf-8"), "invariants.md");
+  const byId = Object.fromEntries(invNodes.map(n => [n.id, n]));
+  assert.deepEqual(byId.INV_A.files, ["src/a.ts", "src/shared/service.ts"]);
+  assert.deepEqual(byId.INV_B.files, ["src/b.ts", "src/shared/service.ts"]);
+});
+
+test("resolveGraphRoot resolves explicitly or via git rev-parse", () => {
+  const explicit = resolveGraphRoot("/custom/path/core");
+  assert.equal(explicit, resolve("/custom/path/core"));
+
+  const cwdFallback = resolveGraphRoot();
+  assert.ok(cwdFallback.endsWith("core"), `Expected path ending in core, got: ${cwdFallback}`);
 });

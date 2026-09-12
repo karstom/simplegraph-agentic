@@ -38,7 +38,10 @@ function findMarkdownFiles(dir: string): string[] {
   for (const entry of entries) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      results.push(...findMarkdownFiles(full));
+      const dirLower = entry.name.toLowerCase();
+      if (dirLower !== "archive" && dirLower !== "generated") {
+        results.push(...findMarkdownFiles(full));
+      }
     } else if (entry.isFile() && entry.name.endsWith(".md")) {
       const base = entry.name.toLowerCase();
       if (base !== "auto_map.md" && base !== ".scratchpad.md") {
@@ -111,13 +114,19 @@ export function runCheck(options: {
   const brokenEdges: BrokenEdgeInfo[] = [];
   const allEdgeTargets = new Set<string>();
 
-  const edgePattern = /→[ \t]*([A-Z][A-Z0-9_]*)/g;
-
   for (const record of allRecords) {
     if (!record.node) continue;
     for (const edge of record.node.edges) {
-      for (const m of edge.matchAll(edgePattern)) {
-        const target = m[1];
+      const arrowIdx = edge.indexOf("→") !== -1 ? edge.indexOf("→") : edge.indexOf("->");
+      if (arrowIdx === -1) continue;
+      // Discard explanation after ':'
+      const colonIdx = edge.indexOf(":", arrowIdx);
+      const targetSegment = colonIdx !== -1
+        ? edge.slice(arrowIdx + (edge[arrowIdx] === "→" ? 1 : 2), colonIdx)
+        : edge.slice(arrowIdx + (edge[arrowIdx] === "→" ? 1 : 2));
+      const targetIdPattern = /[A-Z][A-Z0-9_]*/g;
+      for (const m of targetSegment.matchAll(targetIdPattern)) {
+        const target = m[0];
         allEdgeTargets.add(target);
         if (!allKnownIds.has(target)) {
           brokenEdges.push({

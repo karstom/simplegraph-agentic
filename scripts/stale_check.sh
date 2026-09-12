@@ -53,8 +53,27 @@ strip_noise() {
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+SHOW_ALL=false
+CORE_DIR_ARG=""
+MAX_AGE_DAYS=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --all) SHOW_ALL=true; shift ;;
+    *)
+      if [ -z "$CORE_DIR_ARG" ]; then
+        CORE_DIR_ARG="$1"
+      elif [ -z "$MAX_AGE_DAYS" ]; then
+        MAX_AGE_DAYS="$1"
+      fi
+      shift ;;
+  esac
+done
+
 # Auto-detect core directory (mirrors consistency_check.sh logic)
-if [ "${1:-}" = "" ]; then
+if [ -n "$CORE_DIR_ARG" ]; then
+  CORE_DIR="$CORE_DIR_ARG"
+else
   if [ "$(basename "$(dirname "$SCRIPT_DIR")")" = "core" ]; then
     CORE_DIR="$(dirname "$SCRIPT_DIR")"
   elif [ -d "$(dirname "$SCRIPT_DIR")/core" ]; then
@@ -62,10 +81,8 @@ if [ "${1:-}" = "" ]; then
   else
     CORE_DIR="$(pwd)/core"
   fi
-else
-  CORE_DIR="$1"
 fi
-MAX_AGE_DAYS="${2:-90}"
+MAX_AGE_DAYS="${MAX_AGE_DAYS:-90}"
 PROJECT_DIR="$(dirname "${CORE_DIR}")"
 FOUND_STALE=false
 
@@ -77,10 +94,15 @@ fi
 # Delegate to the cross-platform TypeScript implementation if node and dist/ are built.
 MCP_CLI="${PROJECT_DIR}/mcp/dist/seed/cli.js"
 if [ -f "$MCP_CLI" ] && command -v node >/dev/null 2>&1; then
-  exec node "$MCP_CLI" stale "$PROJECT_DIR" --graph "$CORE_DIR" --days "${MAX_AGE_DAYS}"
+  ALL_FLAG=""
+  [ "$SHOW_ALL" = true ] && ALL_FLAG="--all"
+  exec node "$MCP_CLI" stale "$PROJECT_DIR" --graph "$CORE_DIR" --days "${MAX_AGE_DAYS}" $ALL_FLAG
 fi
 
 echo "Stale check: MAX_AGE_DAYS=${MAX_AGE_DAYS}, CORE_DIR=${CORE_DIR}"
+if [ "$SHOW_ALL" = false ]; then
+  echo "Showing HIGH-priority nodes only. Use --all to inspect MEDIUM and LOW nodes."
+fi
 echo ""
 
 # ── check 1: old LastUpdated dates ────────────────────────────────────────────
@@ -90,15 +112,29 @@ CUTOFF_DATE=$(date -u -d "${MAX_AGE_DAYS} days ago" +%Y-%m-%d 2>/dev/null || \
 
 if [ -n "${CUTOFF_DATE}" ]; then
   echo "── Nodes older than ${MAX_AGE_DAYS} days (before ${CUTOFF_DATE}) ──"
-  # Walk each file's stripped content once, tracking the current node ID, so an
-  # old LastUpdated is attributed to the node it actually belongs to.
-  STALE_DATES=$(find "${CORE_DIR}" -name '*.md' -not -name 'auto_map.md' -not -name '.scratchpad.md' | sort | while IFS= read -r mdfile; do
-    strip_noise "$mdfile" | awk -v cutoff="${CUTOFF_DATE}" -v fname="$(basename "$mdfile")" -v idre="^## NODE: (${ID_CLASS})$" '
-      match($0, /^## NODE: [A-Z][A-Z0-9_]*$/) { node = substr($0, 10); next }
+  STALE_DATES=$(find "${CORE_DIR}" -name '*.md' -not -name 'auto_map.md' -not -name '.scratchpad.md' -not -path '*/archive/*' -not -path '*/generated/*' | sort | while IFS= read -r mdfile; do
+    strip_noise "$mdfile" | awk -v cutoff="${CUTOFF_DATE}" -v fname="$(basename "$mdfile")" -v show_all="${SHOW_ALL}" '
+      match($0, /^##[[:space:]]*NODE:[[:space:]]*[A-Z][A-Z0-9_]*/) {
+        line = $0
+        sub(/\r$/, "", line)
+        sub(/^##[[:space:]]*NODE:[[:space:]]*/, "", line)
+        sub(/[[:space:]].*$/, "", line)
+        node = line
+        priority = "UNSET"
+        next
+      }
+      /^\*\*Priority:\*\*/ {
+        line = $0
+        sub(/\r$/, "", line)
+        sub(/^\*\*Priority:\*\*[[:space:]]*/, "", line)
+        priority = line
+        next
+      }
       /^\*\*LastUpdated:\*\*/ {
+        if (show_all == "false" && toupper(priority) != "HIGH") next
         if (match($0, /[0-9]{4}-[0-9]{2}-[0-9]{2}/)) {
           d = substr($0, RSTART, RLENGTH)
-          if (d < cutoff) printf "  ⏳ %s (%s) — %s\n", (node == "" ? "unknown" : node), d, fname
+          if (d < cutoff) printf "  ⏳ %s [%s] — unmodified since %s (> %sd) — in %s\n", (node == "" ? "unknown" : node), priority, d, cutoff, fname
         }
       }
     '
@@ -119,24 +155,37 @@ echo ""
 # ── check 2: dead file references ────────────────────────────────────────────
 echo "── Nodes referencing files that no longer exist ──"
 
-# For each node, check every path listed in its **Files:** field.
-# NOTE: the previous implementation ended a pipeline with `grep ... || true | while`,
-# which parses as `grep ... || (true | while ...)`. When grep matched, the while
-# loop was skipped entirely and grep's raw output became the "dead refs" report —
-# so every node with a **Files:** line was flagged, whether or not the file existed.
-DEAD_REFS=$(find "${CORE_DIR}" -name '*.md' -not -name 'auto_map.md' -not -name '.scratchpad.md' | sort | while IFS= read -r mdfile; do
+DEAD_REFS=$(find "${CORE_DIR}" -name '*.md' -not -name 'auto_map.md' -not -name '.scratchpad.md' -not -path '*/archive/*' -not -path '*/generated/*' | sort | while IFS= read -r mdfile; do
   strip_noise "$mdfile" \
-    | awk '
-        match($0, /^## NODE: [A-Z][A-Z0-9_]*$/) { node = substr($0, 10); next }
-        /^\*\*Files:\*\*/ { printf "%s\t%s\n", (node == "" ? "unknown" : node), $0 }
+    | awk -v show_all="${SHOW_ALL}" '
+        match($0, /^##[[:space:]]*NODE:[[:space:]]*[A-Z][A-Z0-9_]*/) {
+          line = $0
+          sub(/\r$/, "", line)
+          sub(/^##[[:space:]]*NODE:[[:space:]]*/, "", line)
+          sub(/[[:space:]].*$/, "", line)
+          node = line
+          priority = "UNSET"
+          next
+        }
+        /^\*\*Priority:\*\*/ {
+          line = $0
+          sub(/\r$/, "", line)
+          sub(/^\*\*Priority:\*\*[[:space:]]*/, "", line)
+          priority = line
+          next
+        }
+        /^\*\*Files:\*\*/ {
+          if (show_all == "false" && toupper(priority) != "HIGH") next
+          if (node != "") printf "%s\t%s\t%s\n", node, priority, $0
+        }
       ' \
-    | while IFS="$(printf '\t')" read -r node fileline; do
-        # Each path is wrapped in backticks: **Files:** `a.ts`, `b.ts`
+    | while IFS="$(printf '\t')" read -r node priority fileline; do
+        [ -n "$node" ] || continue
         echo "$fileline" | grep -Eo '`[^`]+`' | tr -d '`' | while IFS= read -r ref; do
           [ -n "$ref" ] || continue
           FULL_PATH="${PROJECT_DIR}/${ref}"
           if [ ! -e "${FULL_PATH}" ]; then
-            echo "  💀 ${node} → ${ref} (not found in $(basename "$mdfile"))"
+            echo "  💀 ${node} [${priority}] — missing file: ${ref} — in $(basename "$mdfile")"
           fi
         done
       done
@@ -152,22 +201,38 @@ fi
 echo ""
 
 # ── check 3: dead path ownership ─────────────────────────────────────────────
-# **Paths:** entries name directories a node owns (mainly Component nodes). A
-# path that no longer exists means the node's ownership matching silently stops
-# firing — the node still reads as live but no longer guards anything.
 echo "── Nodes owning paths that no longer exist ──"
 
-DEAD_PATHS=$(find "${CORE_DIR}" -name '*.md' -not -name 'auto_map.md' -not -name '.scratchpad.md' | sort | while IFS= read -r mdfile; do
+DEAD_PATHS=$(find "${CORE_DIR}" -name '*.md' -not -name 'auto_map.md' -not -name '.scratchpad.md' -not -path '*/archive/*' -not -path '*/generated/*' | sort | while IFS= read -r mdfile; do
   strip_noise "$mdfile" \
-    | awk '
-        match($0, /^## NODE: [A-Z][A-Z0-9_]*$/) { node = substr($0, 10); next }
-        /^\*\*Paths:\*\*/ { printf "%s\t%s\n", (node == "" ? "unknown" : node), $0 }
+    | awk -v show_all="${SHOW_ALL}" '
+        match($0, /^##[[:space:]]*NODE:[[:space:]]*[A-Z][A-Z0-9_]*/) {
+          line = $0
+          sub(/\r$/, "", line)
+          sub(/^##[[:space:]]*NODE:[[:space:]]*/, "", line)
+          sub(/[[:space:]].*$/, "", line)
+          node = line
+          priority = "UNSET"
+          next
+        }
+        /^\*\*Priority:\*\*/ {
+          line = $0
+          sub(/\r$/, "", line)
+          sub(/^\*\*Priority:\*\*[[:space:]]*/, "", line)
+          priority = line
+          next
+        }
+        /^\*\*Paths:\*\*/ {
+          if (show_all == "false" && toupper(priority) != "HIGH") next
+          if (node != "") printf "%s\t%s\t%s\n", node, priority, $0
+        }
       ' \
-    | while IFS="$(printf '\t')" read -r node pathline; do
+    | while IFS="$(printf '\t')" read -r node priority pathline; do
+        [ -n "$node" ] || continue
         echo "$pathline" | grep -Eo '`[^`]+`' | tr -d '`' | while IFS= read -r ref; do
           [ -n "$ref" ] || continue
           if [ ! -d "${PROJECT_DIR}/${ref}" ]; then
-            echo "  💀 ${node} → ${ref}/ (directory not found, in $(basename "$mdfile"))"
+            echo "  💀 ${node} [${priority}] — missing directory: ${ref}/ — in $(basename "$mdfile")"
           fi
         done
       done
@@ -183,22 +248,11 @@ fi
 echo ""
 
 # ── check 4: symbols missing from the structural map ─────────────────────────
-# A **Symbols:** anchor outlives a file rename — that is the point of it — but
-# not a deletion or a rename of the symbol itself. auto_map.md is the cheapest
-# available symbol inventory; when it is absent the check is skipped rather
-# than guessed at, because reporting every symbol as missing would be worse
-# than reporting none.
 echo "── Nodes anchored to symbols not found in auto_map.md ──"
 
-AUTO_MAP="${CORE_DIR}/auto_map.md"
-# An auto_map that exists but carries no symbols is worse than one that is
-# absent: every anchored symbol would be reported missing, burying any real
-# drift under a wall of false positives. That state is easy to reach — a
-# sandboxed snap ctags that could not read the project emits a header-only map.
-# Treat "no symbols at all" the same as "no map".
-# `grep -c` prints 0 AND exits 1 when there are no matches, so `|| echo 0`
-# would append a second zero and make the numeric test below fail outright.
-# Assign, then correct the value only if the assignment itself failed.
+AUTO_MAP="${CORE_DIR}/generated/auto_map.md"
+[ -f "${AUTO_MAP}" ] || AUTO_MAP="${CORE_DIR}/auto_map.md"
+
 MAP_SYMBOLS=0
 if [ -f "${AUTO_MAP}" ]; then
   MAP_SYMBOLS=$(grep -c '`' "${AUTO_MAP}" 2>/dev/null) || MAP_SYMBOLS=0
@@ -211,24 +265,39 @@ elif [ "${MAP_SYMBOLS}" -eq 0 ]; then
   echo "    reported missing. Regenerate it and check for errors:"
   echo "      bash scripts/auto_map.sh"
 else
-  MISSING_SYMS=$(find "${CORE_DIR}" -name '*.md' -not -name 'auto_map.md' -not -name '.scratchpad.md' | sort | while IFS= read -r mdfile; do
+  MISSING_SYMS=$(find "${CORE_DIR}" -name '*.md' -not -name 'auto_map.md' -not -name '.scratchpad.md' -not -path '*/archive/*' -not -path '*/generated/*' | sort | while IFS= read -r mdfile; do
     strip_noise "$mdfile" \
-      | awk '
-          match($0, /^## NODE: [A-Z][A-Z0-9_]*$/) { node = substr($0, 10); next }
-          /^\*\*Symbols:\*\*/ { printf "%s\t%s\n", (node == "" ? "unknown" : node), $0 }
+      | awk -v show_all="${SHOW_ALL}" '
+          match($0, /^##[[:space:]]*NODE:[[:space:]]*[A-Z][A-Z0-9_]*/) {
+            line = $0
+            sub(/\r$/, "", line)
+            sub(/^##[[:space:]]*NODE:[[:space:]]*/, "", line)
+            sub(/[[:space:]].*$/, "", line)
+            node = line
+            priority = "UNSET"
+            next
+          }
+          /^\*\*Priority:\*\*/ {
+            line = $0
+            sub(/\r$/, "", line)
+            sub(/^\*\*Priority:\*\*[[:space:]]*/, "", line)
+            priority = line
+            next
+          }
+          /^\*\*Symbols:\*\*/ {
+            if (show_all == "false" && toupper(priority) != "HIGH") next
+            if (node != "") printf "%s\t%s\t%s\n", node, priority, $0
+          }
         ' \
-      | while IFS="$(printf '\t')" read -r node symline; do
+      | while IFS="$(printf '\t')" read -r node priority symline; do
+          [ -n "$node" ] || continue
           echo "$symline" | grep -Eo '`[^`]+`' | tr -d '`' | while IFS= read -r ref; do
             [ -n "$ref" ] || continue
-            # Compare on the unqualified tail: a node may record
-            # AuthService.refreshToken while ctags emits only refreshToken.
             TAIL="${ref##*.}"
             TAIL="${TAIL##*::}"
             TAIL="${TAIL##*#}"
-            # auto_map wraps every symbol in backticks, so anchoring on the
-            # opening backtick avoids matching the name inside a signature.
             if ! grep -qF "\`${TAIL}" "${AUTO_MAP}"; then
-              echo "  ❓ ${node} → ${ref} (not in auto_map.md, from $(basename "$mdfile"))"
+              echo "  ❓ ${node} [${priority}] — unmapped symbol: ${ref} — in $(basename "$mdfile")"
             fi
           done
         done

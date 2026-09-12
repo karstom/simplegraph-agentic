@@ -24,7 +24,7 @@
 #   `SIMPLEGRAPH_EXCLUDE_DIRS=node_modules,.git ./auto_map.sh --exclude tmp`
 #   skips exactly those three.
 #
-# Output: core/auto_map.md (gitignored — generated artifact)
+# Output: core/generated/auto_map.md (gitignored — generated artifact)
 #
 # Requires: Universal Ctags (https://ctags.io)
 #   Install: sudo apt install universal-ctags  (Debian/Ubuntu)
@@ -72,12 +72,13 @@ fi
 
 # Auto-detect graph directory or accept --output
 if [ -d "${PROJECT_DIR}/core" ]; then
-  OUTPUT_DIR="${PROJECT_DIR}/core"
+  OUTPUT_DIR="${PROJECT_DIR}/core/generated"
 elif [ -d "${PROJECT_DIR}/.agent/skills/memory" ]; then
-  OUTPUT_DIR="${PROJECT_DIR}/.agent/skills/memory"
+  OUTPUT_DIR="${PROJECT_DIR}/.agent/skills/memory/generated"
 else
-  OUTPUT_DIR="${PROJECT_DIR}"
+  OUTPUT_DIR="${PROJECT_DIR}/generated"
 fi
+mkdir -p "${OUTPUT_DIR}"
 OUTPUT="${OUTPUT_DIR}/auto_map.md"
 
 # ── verify deps ───────────────────────────────────────────────────────────────

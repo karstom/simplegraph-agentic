@@ -38,6 +38,13 @@ export interface StaleCheckResult {
   output: string;
 }
 
+export interface StaleCheckOptions {
+  graphRoot: string;
+  repoRoot?: string;
+  maxAgeDays?: number;
+  all?: boolean;
+}
+
 function findMarkdownFiles(dir: string): string[] {
   if (!fs.existsSync(dir)) return [];
   const results: string[] = [];
@@ -46,7 +53,10 @@ function findMarkdownFiles(dir: string): string[] {
   for (const entry of entries) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      results.push(...findMarkdownFiles(full));
+      const base = entry.name.toLowerCase();
+      if (base !== "archive" && base !== "generated") {
+        results.push(...findMarkdownFiles(full));
+      }
     } else if (entry.isFile() && entry.name.endsWith(".md")) {
       const base = entry.name.toLowerCase();
       if (base !== "auto_map.md" && base !== ".scratchpad.md") {
@@ -57,14 +67,12 @@ function findMarkdownFiles(dir: string): string[] {
   return results.sort();
 }
 
-export function runStaleCheck(options: {
-  graphRoot: string;
-  repoRoot?: string;
-  maxAgeDays?: number;
-}): StaleCheckResult {
+export function runStaleCheck(options: StaleCheckOptions): StaleCheckResult {
   const { graphRoot } = options;
   const repoRoot = options.repoRoot ?? path.dirname(graphRoot);
   const maxAgeDays = options.maxAgeDays ?? 90;
+
+  const highOnly = !options.all;
 
   const linesOut: string[] = [];
   linesOut.push(`Stale check: MAX_AGE_DAYS=${maxAgeDays}, GRAPH_ROOT=${graphRoot}, REPO_ROOT=${repoRoot}`);
@@ -83,96 +91,107 @@ export function runStaleCheck(options: {
     allNodes.push(...parseNodes(content, rel));
   }
 
+  // Filter to HIGH priority by default unless --all is passed
+  const targetNodes = highOnly
+    ? allNodes.filter(n => (n.priority || "").toUpperCase() === "HIGH")
+    : allNodes;
+
+  interface StaleNodeFinding {
+    id: string;
+    priority: string;
+    file: string;
+    reasons: string[];
+  }
+  const findingsMap = new Map<string, StaleNodeFinding>();
+
+  const addReason = (node: GraphNode, reason: string) => {
+    let item = findingsMap.get(node.id);
+    if (!item) {
+      item = {
+        id: node.id,
+        priority: node.priority || "UNSET",
+        file: node.sourceFile,
+        reasons: [],
+      };
+      findingsMap.set(node.id, item);
+    }
+    item.reasons.push(reason);
+  };
+
   // 1. Check old LastUpdated
   const staleDates: StaleDateHit[] = [];
-  for (const node of allNodes) {
+  for (const node of targetNodes) {
     if (node.lastUpdated && /^\d{4}-\d{2}-\d{2}$/.test(node.lastUpdated)) {
       if (node.lastUpdated < cutoffDateStr) {
         staleDates.push({ id: node.id, date: node.lastUpdated, file: node.sourceFile });
+        addReason(node, `unmodified since ${node.lastUpdated} (> ${maxAgeDays}d)`);
       }
     }
   }
 
   // 2. Check missing files
   const missingFiles: MissingPathHit[] = [];
-  for (const node of allNodes) {
+  for (const node of targetNodes) {
     for (const f of node.files) {
       const cleanF = f.trim();
       if (!cleanF) continue;
       const targetPath = path.resolve(repoRoot, cleanF);
       if (!fs.existsSync(targetPath)) {
         missingFiles.push({ id: node.id, target: cleanF, file: node.sourceFile, type: "file" });
+        addReason(node, `missing file: ${cleanF}`);
       }
     }
   }
 
   // 3. Check missing paths (directories)
   const missingPaths: MissingPathHit[] = [];
-  for (const node of allNodes) {
+  for (const node of targetNodes) {
     for (const p of node.paths) {
       const cleanP = p.trim();
       if (!cleanP) continue;
       const targetPath = path.resolve(repoRoot, cleanP);
       if (!fs.existsSync(targetPath) || !fs.statSync(targetPath).isDirectory()) {
         missingPaths.push({ id: node.id, target: cleanP, file: node.sourceFile, type: "directory" });
+        addReason(node, `missing directory: ${cleanP}/`);
       }
     }
   }
 
-  // 4. Check unmapped symbols (if auto_map.md exists)
-  const autoMapFile = path.join(graphRoot, "auto_map.md");
+  // 4. Check unmapped symbols (check generated/auto_map.md or legacy auto_map.md)
+  const autoMapFile = fs.existsSync(path.join(graphRoot, "generated", "auto_map.md"))
+    ? path.join(graphRoot, "generated", "auto_map.md")
+    : path.join(graphRoot, "auto_map.md");
+
   const missingSymbols: MissingSymbolHit[] = [];
   if (fs.existsSync(autoMapFile)) {
     const autoMapContent = fs.readFileSync(autoMapFile, "utf-8");
-    for (const node of allNodes) {
+    for (const node of targetNodes) {
       for (const sym of node.symbols) {
         const cleanSym = sym.trim();
         if (!cleanSym) continue;
         if (!autoMapContent.includes(cleanSym)) {
           missingSymbols.push({ id: node.id, symbol: cleanSym, file: node.sourceFile });
+          addReason(node, `unmapped symbol: ${cleanSym}`);
         }
       }
     }
   }
 
-  if (staleDates.length > 0) {
-    linesOut.push(`── Nodes older than ${maxAgeDays} days (before ${cutoffDateStr}) ──`);
-    for (const s of staleDates) {
-      linesOut.push(`  ⏳ ${s.id} (${s.date}) — ${s.file}`);
-    }
-    linesOut.push("");
-  }
-
-  if (missingFiles.length > 0) {
-    linesOut.push("── Nodes referencing missing files ──");
-    for (const m of missingFiles) {
-      linesOut.push(`  ❌ ${m.id} references missing file: ${m.target} (in ${m.file})`);
-    }
-    linesOut.push("");
-  }
-
-  if (missingPaths.length > 0) {
-    linesOut.push("── Nodes owning missing directories ──");
-    for (const m of missingPaths) {
-      linesOut.push(`  ❌ ${m.id} owns missing directory: ${m.target} (in ${m.file})`);
-    }
-    linesOut.push("");
-  }
-
-  if (missingSymbols.length > 0) {
-    linesOut.push("── Nodes referencing unmapped symbols ──");
-    for (const s of missingSymbols) {
-      linesOut.push(`  ⚠ ${s.id} references unmapped symbol: ${s.symbol} (in ${s.file})`);
-    }
-    linesOut.push("");
-  }
-
-  const ok = staleDates.length === 0 && missingFiles.length === 0 && missingPaths.length === 0;
+  const ok = findingsMap.size === 0;
 
   if (ok) {
-    linesOut.push(`✓ Graph is fresh: no outdated dates (> ${maxAgeDays}d) and all referenced files/paths exist.`);
+    const scopeNote = highOnly ? " (HIGH-priority nodes)" : "";
+    linesOut.push(`✓ Graph is fresh${scopeNote}: no outdated dates (> ${maxAgeDays}d) and all referenced files/paths exist.`);
   } else {
-    linesOut.push("⚠ Stale or missing references found in graph nodes.");
+    linesOut.push(`── Stale or broken references found (${findingsMap.size} node(s)) ──`);
+    if (highOnly) {
+      linesOut.push(`  Showing HIGH-priority nodes only. Use --all to inspect MEDIUM and LOW nodes.\n`);
+    }
+    for (const f of findingsMap.values()) {
+      linesOut.push(`  ⏳ ${f.id} [${f.priority}] — ${f.reasons.join("; ")} — in ${f.file}`);
+    }
+    linesOut.push("");
+    linesOut.push(`✗ ${findingsMap.size} stale node(s) detected. Review and update as needed.`);
   }
 
   return {

@@ -61,6 +61,67 @@ expect "broken edge with digits in ID is caught" 1 "$(make_graph <<'G'
 G
 )"
 
+expect "fabricated missing edge target REG_DOES_NOT_EXIST exits 1" 1 "$(make_graph <<'G'
+## NODE: REG_ALPHA
+**Edges:**
+- CAUSED_BY → REG_DOES_NOT_EXIST
+G
+)"
+
+expect "prose arrows do not trigger false broken edge warnings" 0 "$(make_graph <<'G'
+## NODE: REG_ALPHA
+**Summary:** cache purge (dashboard → Caching → Purge Everything), no stats block → FAIL, (reject → ACCEPT)
+**Edges:**
+- VIOLATED_BY → INV_BETA
+
+---
+
+## NODE: INV_BETA
+**Edges:** _(none)_
+G
+)"
+
+expect "arrows in edge explanations are discarded and not treated as targets" 0 "$(make_graph <<'G'
+## NODE: REG_ALPHA
+**Edges:**
+- VIOLATED_BY → INV_BETA: error code ended → MISSING
+
+---
+
+## NODE: INV_BETA
+**Edges:** _(none)_
+G
+)"
+
+expect "multiple dot-separated edge targets both resolve" 0 "$(make_graph <<'G'
+## NODE: REG_ALPHA
+**Edges:**
+- VIOLATED_BY → INV_BETA · INV_GAMMA: both invariants apply
+
+---
+
+## NODE: INV_BETA
+**Edges:** _(none)_
+
+---
+
+## NODE: INV_GAMMA
+**Edges:** _(none)_
+G
+)"
+
+expect "multiple dot-separated edge targets catch missing second target" 1 "$(make_graph <<'G'
+## NODE: REG_ALPHA
+**Edges:**
+- VIOLATED_BY → INV_BETA · INV_NONEXISTENT: one is missing
+
+---
+
+## NODE: INV_BETA
+**Edges:** _(none)_
+G
+)"
+
 expect "edge to a digit-bearing node that exists passes" 0 "$(make_graph <<'G'
 ## NODE: INV_AUTH_9Z
 **Edges:**

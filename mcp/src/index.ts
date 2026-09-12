@@ -17,6 +17,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import * as fs from "fs";
 import * as path from "path";
+import { execSync } from "child_process";
 import { parseNodes, formatNode, findNodeBlock, escapeRe, type GraphNode } from "./parser.js";
 import { buildContext } from "./seed/mine.js";
 import { selectDecisionCandidates, decisionIdFor, pullRequestTrail } from "./seed/candidates.js";
@@ -25,9 +26,28 @@ import { regenerateIndex } from "./reindex.js";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-const GRAPH_ROOT = process.env.SIMPLEGRAPH_ROOT
-  ? path.resolve(process.env.SIMPLEGRAPH_ROOT)
-  : path.resolve(process.cwd(), "core");
+export function resolveGraphRoot(envRoot?: string): string {
+  if (envRoot) {
+    return path.resolve(envRoot);
+  }
+  if (process.env.SIMPLEGRAPH_ROOT) {
+    return path.resolve(process.env.SIMPLEGRAPH_ROOT);
+  }
+  try {
+    const toplevel = execSync("git rev-parse --show-toplevel", {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "ignore"],
+    }).trim();
+    if (toplevel) {
+      return path.resolve(toplevel, "core");
+    }
+  } catch {
+    // not in a git repo or git not available
+  }
+  return path.resolve(process.cwd(), "core");
+}
+
+const GRAPH_ROOT = resolveGraphRoot();
 
 // Optional second graph (shared/ cross-repo nodes). Read-only from this server.
 const SHARED_ROOT = process.env.SIMPLEGRAPH_SHARED
@@ -405,7 +425,7 @@ function insertRootCause(block: string, rootCause: string): string {
 // ── Exported handler functions (testable with any graphRoot) ──────────────────
 
 export function handleUpdateNode(
-  args: { id: string; field: string; value: string; root_cause?: string },
+  args: { id: string; field: string; value: string; root_cause?: string; mode?: "replace" | "append" },
   graphRoot: string,
   sharedRoot: string | null = null
 ): ToolResult {
@@ -416,11 +436,11 @@ export function handleUpdateNode(
 }
 
 function handleUpdateNodeLocked(
-  args: { id: string; field: string; value: string; root_cause?: string },
+  args: { id: string; field: string; value: string; root_cause?: string; mode?: "replace" | "append" },
   graphRoot: string,
   sharedRoot: string | null
 ): ToolResult {
-  const { id, field, value, root_cause } = args;
+  const { id, field, value, root_cause, mode = "replace" } = args;
 
   const localNodes = getNodesFromRoot(graphRoot);
   const sharedNodes = sharedRoot ? getNodesFromRoot(sharedRoot, "shared") : [];
@@ -495,7 +515,7 @@ function handleUpdateNodeLocked(
   // Generic field update. `field` is escaped because it reaches the regex from
   // tool input; the replacement uses a function so `$&`-style sequences in the
   // new value are inserted literally rather than re-expanded.
-  const fieldPattern = new RegExp(`(\\*\\*${escapeRe(field)}:\\*\\*[ \\t]*).+`);
+  const fieldPattern = new RegExp(`(\\*\\*${escapeRe(field)}:\\*\\*[ \\t]*)([\\s\\S]*?)(?=\\r?\\n\\*\\*[A-Za-z]|\\r?\\n---|$)`);
   if (!fieldPattern.test(block)) {
     // Symbols and Paths are emitted only when populated, so every node written
     // before they existed lacks the line entirely. Refusing the update there
@@ -514,9 +534,101 @@ function handleUpdateNodeLocked(
     }
     return fail(`Field **${field}:** not found in NODE: ${id}. Check the field name.`);
   }
+
+  if (mode === "append") {
+    block = block.replace(fieldPattern, (_m, p1: string, p2: string) => {
+      const existing = p2.trim();
+      if (!existing || /^_?\(none\)_?$/.test(existing)) {
+        return `${p1}${resolvedValue}`;
+      }
+      if (field === "Summary") {
+        const joiner = resolvedValue.startsWith("\n") ? "" : "\n\n";
+        return `${p1}${existing}${joiner}${resolvedValue}`;
+      }
+      if (field === "Files" || field === "Symbols" || field === "Paths" || field === "Tags") {
+        return `${p1}${existing}, ${resolvedValue}`;
+      }
+      return `${p1}${existing}\n${resolvedValue}`;
+    });
+    atomicWriteFileSync(filePath, loc.before + block + loc.after);
+    return ok(`✓ Appended to **${field}** for NODE: ${id} in ${node.sourceFile}.`);
+  }
+
   block = block.replace(fieldPattern, (_m, p1: string) => `${p1}${resolvedValue}`);
   atomicWriteFileSync(filePath, loc.before + block + loc.after);
   return ok(`✓ Updated **${field}** for NODE: ${id} → "${resolvedValue}" in ${node.sourceFile}.`);
+}
+
+export function handleCorrectNode(
+  args: { id: string; correction: string; date?: string },
+  graphRoot: string,
+  sharedRoot: string | null = null
+): ToolResult {
+  return withGraphLock(graphRoot, () => handleCorrectNodeLocked(args, graphRoot, sharedRoot));
+}
+
+function handleCorrectNodeLocked(
+  args: { id: string; correction: string; date?: string },
+  graphRoot: string,
+  sharedRoot: string | null
+): ToolResult {
+  const { id, correction } = args;
+  if (!correction || !correction.trim()) {
+    return fail("Correction text cannot be empty.");
+  }
+  const date = args.date?.trim() || new Date().toISOString().slice(0, 10);
+
+  const localNodes = getNodesFromRoot(graphRoot);
+  const sharedNodes = sharedRoot ? getNodesFromRoot(sharedRoot, "shared") : [];
+  const allNodes = [...localNodes, ...sharedNodes];
+
+  const node = allNodes.find(n => n.id === id);
+  if (!node) return fail(`Node ${id} not found. Use simplegraph_search to find it.`);
+
+  const isShared = node.sourceFile.startsWith("[shared]");
+  if (isShared) return fail(`Node ${id} is in the shared read-only graph. Update it in its source repo.`);
+
+  const filePath = path.join(graphRoot, node.sourceFile);
+  const content = fs.readFileSync(filePath, "utf-8");
+
+  const loc = findNodeBlock(content, id);
+  if (!loc) {
+    return fail(`Could not locate the "## NODE: ${id}" heading in ${node.sourceFile}.`);
+  }
+  let block = loc.block;
+
+  const correctionEntry = `\n\n⚠ CORRECTED ${date}: ${correction.trim()}`;
+
+  const summaryPattern = /(\*\*Summary:\*\*[ \t]*)([\s\S]*?)(?=\r?\n\*\*[A-Za-z]|\r?\n---|互?$)/;
+  if (summaryPattern.test(block)) {
+    block = block.replace(summaryPattern, (_m, p1: string, p2: string) => `${p1}${p2.trimEnd()}${correctionEntry}`);
+  } else {
+    block = insertAfterField(block, "Label", `**Summary:** ${correctionEntry.trimStart()}`);
+  }
+
+  const lastUpdatedPattern = /(\*\*LastUpdated:\*\*[ \t]*)\S+/;
+  if (lastUpdatedPattern.test(block)) {
+    block = block.replace(lastUpdatedPattern, (_m, p1: string) => `${p1}${date}`);
+  } else {
+    block = insertAfterField(block, "Files", `**LastUpdated:** ${date}`);
+  }
+
+  atomicWriteFileSync(filePath, loc.before + block + loc.after);
+  return ok(`✓ Recorded correction for NODE: ${id} in ${node.sourceFile} (LastUpdated: ${date}).`);
+}
+
+function extractInvariantTargets(edges: string[]): string[] {
+  const targets: string[] = [];
+  for (const edge of edges) {
+    const m = edge.match(/^\s*-?\s*(?:VIOLATES|VIOLATED_BY)\s*(?:→|->)\s*([^:\r\n]+)/i);
+    if (!m) continue;
+    const targetSection = m[1];
+    const matches = targetSection.match(/\b[A-Z][A-Z0-9_]*\b/g);
+    if (matches) {
+      targets.push(...matches);
+    }
+  }
+  return [...new Set(targets)];
 }
 
 export function handleAddNode(
@@ -574,8 +686,10 @@ function handleAddNodeLocked(
   if (edges.length > 0) {
     const knownIds = new Set(allNodes.map(n => n.id));
     const broken = edges.flatMap(e => {
-      const m = e.match(/→\s*([A-Z][A-Z0-9_]*)/);
-      return m && !knownIds.has(m[1]) ? [m[1]] : [];
+      const match = e.match(/(?:→|->)\s*([^:\r\n]+)/);
+      if (!match) return [];
+      const targets = match[1].match(/\b[A-Z][A-Z0-9_]*\b/g) ?? [];
+      return targets.filter(t => !knownIds.has(t));
     });
     if (broken.length > 0)
       return fail(`Edge target(s) not found: ${broken.join(", ")}. Create those nodes first or check IDs with simplegraph_search.`);
@@ -601,6 +715,52 @@ function handleAddNodeLocked(
     graphRoot
   );
 
+  // Blast radius propagation: when simplegraph_add_node records VIOLATES → INV_X
+  // (or VIOLATED_BY → INV_X), automatically merge any new files into INV_X's Files list
+  // so the invariant guards the files where the violation occurred.
+  const propagatedInvariants: string[] = [];
+  if (files.length > 0 && edges.length > 0) {
+    const invariantTargets = extractInvariantTargets(edges);
+    for (const invId of invariantTargets) {
+      const currentNodes = getNodesFromRoot(graphRoot);
+      const invNode = currentNodes.find(n => n.id === invId);
+      if (!invNode || invNode.sourceFile.startsWith("[shared]")) continue;
+
+      const newFiles = files.filter(f => !invNode.files.includes(f));
+      if (newFiles.length === 0) continue;
+
+      const invFilePath = path.join(graphRoot, invNode.sourceFile);
+      const invContent = fs.readFileSync(invFilePath, "utf-8");
+      const invLoc = findNodeBlock(invContent, invId);
+      if (!invLoc) continue;
+
+      let invBlock = invLoc.block;
+      const formattedNew = newFiles.map(f => `\`${f}\``).join(", ");
+
+      const filesPattern = /(\*\*Files:\*\*[ \t]*)(.+)/;
+      if (filesPattern.test(invBlock)) {
+        invBlock = invBlock.replace(filesPattern, (_m, p1: string, p2: string) => {
+          const existing = p2.trim();
+          if (!existing || /^_?\(none\)_?$/.test(existing)) {
+            return `${p1}${formattedNew}`;
+          }
+          return `${p1}${existing}, ${formattedNew}`;
+        });
+      } else {
+        const anchor = /\*\*Edges:\*\*/.test(invBlock) ? "Edges" : "Tags";
+        invBlock = insertAfterField(invBlock, anchor, `**Files:** ${formattedNew}`);
+      }
+
+      const lastUpdatedPattern = /(\*\*LastUpdated:\*\*[ \t]*)\S+/;
+      if (lastUpdatedPattern.test(invBlock)) {
+        invBlock = invBlock.replace(lastUpdatedPattern, (_m, p1: string) => `${p1}${today}`);
+      }
+
+      atomicWriteFileSync(invFilePath, invLoc.before + invBlock + invLoc.after);
+      propagatedInvariants.push(`${invId} (+${newFiles.length} file${newFiles.length > 1 ? "s" : ""})`);
+    }
+  }
+
   // The Quick Index is derived: regenerate it from the nodes rather than
   // appending, so the index stays deterministic and merge-conflict-free across
   // parallel agents. Best-effort — a missing index shouldn't fail the add.
@@ -609,9 +769,12 @@ function handleAddNodeLocked(
   const indexNote = index.warnings.length
     ? `\n⚠ Index: ${index.warnings.join("; ")}`
     : `\n✓ graph_index.md regenerated (${index.total} node(s) indexed).`;
+  const propMsg = propagatedInvariants.length > 0
+    ? `\n✓ Propagated blast radius to invariant: ${propagatedInvariants.join(", ")}.`
+    : "";
 
   return ok(
-    `✓ Added NODE: ${id} to ${targetFile}${attrib}.${indexNote}\n\n` +
+    `✓ Added NODE: ${id} to ${targetFile}${attrib}.${indexNote}${propMsg}\n\n` +
     `Next steps:\n` +
     `1. Run bash core/scripts/consistency_check.sh to verify no broken edges (or duplicate IDs).\n` +
     `2. Commit both the code change and the graph update together.`
@@ -951,8 +1114,37 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
               "Answer all three: source of truth, violated invariant, why prior fixes were symptomatic. " +
               "Omitting this blocks the increment — the counter will NOT advance.",
           },
+          mode: {
+            type: "string",
+            enum: ["replace", "append"],
+            description:
+              "Update mode: 'replace' (default) replaces the field value; 'append' appends to text or list fields instead of rewriting.",
+          },
         },
         required: ["id", "field", "value"],
+      },
+    },
+    {
+      name: "simplegraph_correct_node",
+      description:
+        "Record a correction or erratum on an existing node. Appends '⚠ CORRECTED <date>: <correction>' to the node's Summary and updates LastUpdated.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          id: {
+            type: "string",
+            description: "The node ID to correct (e.g. REG_HOT_CACHE, INV_TOKEN_BOUND)",
+          },
+          correction: {
+            type: "string",
+            description: "The correction to record (what was previously thought vs what is actually true)",
+          },
+          date: {
+            type: "string",
+            description: "Optional ISO date (YYYY-MM-DD). Defaults to today.",
+          },
+        },
+        required: ["id", "correction"],
       },
     },
     {
@@ -1207,10 +1399,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "simplegraph_update_node": {
-        const { id, field, value, root_cause } = args as {
-          id: string; field: string; value: string; root_cause?: string;
+        const { id, field, value, root_cause, mode } = args as {
+          id: string; field: string; value: string; root_cause?: string; mode?: "replace" | "append";
         };
-        return handleUpdateNode({ id, field, value, root_cause }, GRAPH_ROOT, SHARED_ROOT);
+        return handleUpdateNode({ id, field, value, root_cause, mode }, GRAPH_ROOT, SHARED_ROOT);
+      }
+
+      case "simplegraph_correct_node": {
+        const { id, correction, date } = args as {
+          id: string; correction: string; date?: string;
+        };
+        return handleCorrectNode({ id, correction, date }, GRAPH_ROOT, SHARED_ROOT);
       }
 
       case "simplegraph_get_node": {
@@ -1331,6 +1530,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 // ── Start ─────────────────────────────────────────────────────────────────────
 
 async function main() {
+  if (!fs.existsSync(GRAPH_ROOT) || !fs.statSync(GRAPH_ROOT).isDirectory()) {
+    console.error(`[simplegraph] Fatal: graph root does not exist: ${GRAPH_ROOT}`);
+    console.error(`[simplegraph] Set SIMPLEGRAPH_ROOT env var or ensure 'core/' exists at repository root.`);
+    process.exit(1);
+  }
+  console.error(`[simplegraph] Using graph root: ${GRAPH_ROOT}`);
+
   const transport = new StdioServerTransport();
   await server.connect(transport);
   process.stderr.write(

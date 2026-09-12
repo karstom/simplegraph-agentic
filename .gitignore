@@ -1,8 +1,10 @@
 # simplegraph-agentic .gitignore
 # Generated artifacts — regenerate, don't commit
 core/auto_map.md
+core/generated/
 core/.scratchpad.md
 shared/auto_map.md
+shared/generated/
 
 # sg seed working files — the draft awaits review; the state file is local
 core/.seed_draft.json

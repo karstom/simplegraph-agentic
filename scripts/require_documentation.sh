@@ -74,6 +74,7 @@ CHANGED=$(
 DOCUMENTED=$(
   printf '%s\n' "$CHANGED" \
     | grep -E "^${COREREL}/" 2>/dev/null \
+    | grep -vE "^${COREREL}/(archive|generated)/" \
     | grep -vE "/(auto_map\.md|\.scratchpad\.md|\.seed_(draft|state)\.json)$" 2>/dev/null \
     || true
 )
