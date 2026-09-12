@@ -46,6 +46,7 @@ Update the graph as part of the same commit. Protocol is in `core/HOW_TO_UPDATE.
 | Bug fixed | `simplegraph_add_node` (type: Regression), then `simplegraph_update_index` |
 | Decision made | `simplegraph_add_node` (type: Decision), then `simplegraph_update_index` |
 | Bug recurred | `simplegraph_update_node` with `field:"REGRESSED_N_TIMES"`, `value:"increment"` |
+| Claim re-verified | `simplegraph_verify_node` with `id` and optional `evidence` |
 | Regression resolved | `simplegraph_archive_regression` |
 
 Without MCP: edit `core/regressions.md` / `core/decisions.md` and update `core/graph_index.md` directly.
@@ -55,6 +56,7 @@ Without MCP: edit `core/regressions.md` / `core/decisions.md` and update `core/g
 | Tool | When |
 |---|---|
 | `simplegraph_index` | Session start (mandatory) |
+| `simplegraph_preflight` | Before planning changes / touching files |
 | `simplegraph_check_files` | Before editing any file |
 | `simplegraph_anti_patterns` | Before generating code |
 | `simplegraph_get_node` | Fetch a known node by exact ID |
@@ -63,6 +65,7 @@ Without MCP: edit `core/regressions.md` / `core/decisions.md` and update `core/g
 | `simplegraph_add_node` | After fixing a bug or making a decision |
 | `simplegraph_update_index` | Immediately after `simplegraph_add_node` |
 | `simplegraph_update_node` | Update a field on an existing node |
+| `simplegraph_verify_node` | When re-verifying a node's claim |
 | `simplegraph_archive_regression` | When a regression is permanently resolved |
 | `simplegraph_scratchpad` | Session notes not yet ready to commit as nodes |
 

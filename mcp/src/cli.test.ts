@@ -5,10 +5,11 @@ import * as assert from "node:assert/strict";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
+import { execSync } from "child_process";
 import { runCheck } from "./check.js";
 import { runStaleCheck } from "./stale.js";
 import { runRequireDocHook } from "./hook.js";
-import { runCorrectCli } from "./seed/cli.js";
+import { runCorrectCli, runVerifyCli, runPreflightCli } from "./seed/cli.js";
 
 function makeTmpDir(prefix: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -210,6 +211,105 @@ test("runCorrectCli: records correction on node via CLI", async () => {
     const content = fs.readFileSync(path.join(core, "regressions.md"), "utf-8");
     assert.ok(content.includes("⚠ CORRECTED 2026-09-12: The bug was actually in cache invalidation"));
     assert.ok(content.includes("**LastUpdated:** 2026-09-12"));
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("runStaleCheck: detects code churn when anchored files have commits since node write", () => {
+  const tmp = makeTmpDir("sg_stale_churn_");
+  try {
+    // Init git repo
+    execSync("git init", { cwd: tmp, stdio: "ignore" });
+    execSync("git config user.name 'Test Runner'", { cwd: tmp, stdio: "ignore" });
+    execSync("git config user.email 'test@example.com'", { cwd: tmp, stdio: "ignore" });
+
+    const srcDir = path.join(tmp, "src");
+    fs.mkdirSync(srcDir, { recursive: true });
+    fs.writeFileSync(path.join(srcDir, "auth.ts"), "export const token = 1;\n");
+    execSync("git add src/auth.ts && git commit -m 'initial'", { cwd: tmp, stdio: "ignore" });
+
+    const baseSha = execSync("git rev-parse --short HEAD", { cwd: tmp, encoding: "utf-8" }).trim();
+
+    const core = path.join(tmp, "core");
+    fs.mkdirSync(core, { recursive: true });
+    fs.writeFileSync(
+      path.join(core, "invariants.md"),
+      `## NODE: INV_TOKEN_EXPIRY\n**Type:** Invariant\n**Priority:** HIGH\n**Label:** Token Expiry\n**Summary:** Valid.\n**Edges:**\n**Files:** \`src/auth.ts\`\n**Commit:** ${baseSha}\n**LastUpdated:** 2026-09-01\n`
+    );
+
+    // No churn yet
+    const cleanRes = runStaleCheck({ graphRoot: core, repoRoot: tmp });
+    assert.equal(cleanRes.ok, true);
+
+    // Make 2 commits touching src/auth.ts
+    fs.writeFileSync(path.join(srcDir, "auth.ts"), "export const token = 2;\n");
+    execSync("git commit -am 'touch 1'", { cwd: tmp, stdio: "ignore" });
+    fs.writeFileSync(path.join(srcDir, "auth.ts"), "export const token = 3;\n");
+    execSync("git commit -am 'touch 2'", { cwd: tmp, stdio: "ignore" });
+
+    // Now code has churned 2 times since write at baseSha
+    const churnRes = runStaleCheck({ graphRoot: core, repoRoot: tmp });
+    assert.equal(churnRes.ok, false);
+    assert.equal(churnRes.codeChurn?.length, 1);
+    assert.equal(churnRes.codeChurn[0].count, 2);
+    assert.match(churnRes.output, /code under node changed 2 time\(s\) since write at/);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("runStaleCheck: node with recent LastVerified is not marked stale even if LastUpdated is old", () => {
+  const tmp = makeTmpDir("sg_stale_verified_");
+  try {
+    const core = path.join(tmp, "core");
+    fs.mkdirSync(core, { recursive: true });
+    const today = new Date().toISOString().slice(0, 10);
+    fs.writeFileSync(
+      path.join(core, "decisions.md"),
+      `## NODE: DEC_OLD_BUT_VERIFIED\n**Type:** Decision\n**Priority:** HIGH\n**Label:** Decision\n**Summary:** Holds.\n**Edges:**\n**Files:**\n**LastVerified:** ${today}\n**LastUpdated:** 2020-01-01\n`
+    );
+
+    const res = runStaleCheck({ graphRoot: core, repoRoot: tmp, maxAgeDays: 90 });
+    assert.equal(res.ok, true);
+    assert.equal(res.staleDates.length, 0);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("runVerifyCli: updates LastVerified on existing node", async () => {
+  const tmp = makeTmpDir("sg_cli_verify_");
+  try {
+    const core = path.join(tmp, "core");
+    fs.mkdirSync(core, { recursive: true });
+    fs.writeFileSync(
+      path.join(core, "regressions.md"),
+      `## NODE: REG_TEST_VERIFY\n**Type:** Regression\n**Priority:** HIGH\n**Label:** Verify me\n**Summary:** Claim to verify.\n**Edges:**\n**Files:**\n**LastUpdated:** 2026-01-01\n`
+    );
+
+    const code = await runVerifyCli(["REG_TEST_VERIFY", "--date", "2026-03-22", "--graph", core]);
+    assert.equal(code, 0);
+
+    const content = fs.readFileSync(path.join(core, "regressions.md"), "utf-8");
+    assert.ok(content.includes("**LastVerified:** 2026-03-22"));
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("runPreflightCli: outputs matching guardrails for intent", async () => {
+  const tmp = makeTmpDir("sg_cli_preflight_");
+  try {
+    const core = path.join(tmp, "core");
+    fs.mkdirSync(core, { recursive: true });
+    fs.writeFileSync(
+      path.join(core, "anti_patterns.md"),
+      `## NODE: ANTI_GLOBAL_STATE\n**Type:** AntiPattern\n**Priority:** HIGH\n**Label:** Avoid global mutable state\n**Summary:** Global mutable state causes bugs.\n**Tags:** global, state\n**Edges:**\n**Files:**\n**LastUpdated:** 2026-01-01\n`
+    );
+
+    const code = await runPreflightCli(["use global mutable state for session cache", "--graph", core]);
+    assert.equal(code, 0);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }

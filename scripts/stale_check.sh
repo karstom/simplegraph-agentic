@@ -316,6 +316,80 @@ fi
 
 echo ""
 
+# ── check 5: code churn on anchored files since write commit ─────────────────
+echo "── Nodes whose anchored files have changed since write commit ──"
+if command -v git >/dev/null 2>&1 && git -C "${PROJECT_DIR}" rev-parse --git-dir >/dev/null 2>&1; then
+  CHURN_REFS=$(find "${CORE_DIR}" -name '*.md' -not -name 'auto_map.md' -not -name '.scratchpad.md' -not -path '*/archive/*' -not -path '*/generated/*' | sort | while IFS= read -r mdfile; do
+    strip_noise "$mdfile" \
+      | awk -v show_all="${SHOW_ALL}" '
+          match($0, /^##[[:space:]]*NODE:[[:space:]]*[A-Z][A-Z0-9_]*/) {
+            line = $0
+            sub(/\r$/, "", line)
+            sub(/^##[[:space:]]*NODE:[[:space:]]*/, "", line)
+            sub(/[[:space:]].*$/, "", line)
+            node = line
+            priority = "UNSET"
+            commit = ""
+            files = ""
+            next
+          }
+          /^\*\*Priority:\*\*/ {
+            line = $0
+            sub(/\r$/, "", line)
+            sub(/^\*\*Priority:\*\*[[:space:]]*/, "", line)
+            priority = line
+            next
+          }
+          /^\*\*Commit:\*\*/ {
+            line = $0
+            sub(/\r$/, "", line)
+            sub(/^\*\*Commit:\*\*[[:space:]]*/, "", line)
+            commit = line
+            next
+          }
+          /^\*\*Files:\*\*/ {
+            line = $0
+            sub(/\r$/, "", line)
+            sub(/^\*\*Files:\*\*[[:space:]]*/, "", line)
+            files = line
+            next
+          }
+          /^(##[[:space:]]*NODE:|$)/ {
+            if (node != "" && commit != "" && files != "" && files !~ /_\(none\)_/) {
+              if (show_all == "true" || toupper(priority) == "HIGH") {
+                printf "%s\t%s\t%s\t%s\n", node, priority, commit, files
+              }
+            }
+            node = ""
+          }
+        ' \
+      | while IFS="$(printf '\t')" read -r node priority commit fileline; do
+          [ -n "$node" ] || continue
+          FILE_ARGS=""
+          for ref in $(echo "$fileline" | grep -Eo '`[^`]+`' | tr -d '`'); do
+            [ -n "$ref" ] && FILE_ARGS="${FILE_ARGS} ${ref}"
+          done
+          if [ -n "$FILE_ARGS" ]; then
+            DIST=$(git -C "${PROJECT_DIR}" rev-list --count "${commit}..HEAD" -- ${FILE_ARGS} 2>/dev/null || echo 0)
+            if [ "$DIST" -gt 0 ] 2>/dev/null; then
+              echo "  ⏳ ${node} [${priority}] — code under node changed ${DIST} time(s) since write at ${commit} — in $(basename "$mdfile")"
+            fi
+          fi
+        done
+  done)
+
+  if [ -n "${CHURN_REFS}" ]; then
+    echo "${CHURN_REFS}"
+    FOUND_STALE=true
+  else
+    echo "  ✓ No code churn detected under anchored nodes."
+  fi
+else
+  echo "  — Skipped: not a git repository or git not available."
+fi
+
+echo ""
+
 # ── result ────────────────────────────────────────────────────────────────────
 if [ "${FOUND_STALE}" = true ]; then
   echo "✗ Stale nodes detected. Review and update as needed."

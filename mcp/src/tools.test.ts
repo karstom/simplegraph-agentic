@@ -7,7 +7,7 @@ import { mkdtempSync, writeFileSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseNodes, formatNode } from "./parser.js";
-import { handleUpdateNode, handleAddNode, handleCorrectNode, resolveGraphRoot, pathMatches } from "./index.js";
+import { handleUpdateNode, handleAddNode, handleCorrectNode, handleVerifyNode, handlePreflight, resolveGraphRoot, pathMatches } from "./index.js";
 import { findNodeBlock } from "./parser.js";
 
 // ── Test helpers ──────────────────────────────────────────────────────────────
@@ -703,4 +703,93 @@ test("resolveGraphRoot resolves explicitly or via git rev-parse", () => {
 
   const cwdFallback = resolveGraphRoot();
   assert.ok(cwdFallback.endsWith("core"), `Expected path ending in core, got: ${cwdFallback}`);
+});
+
+test("handleVerifyNode updates LastVerified and regenerates index", () => {
+  const dir = setupGraph(1);
+  writeFileSync(join(dir, "graph_index.md"), "# Index\n");
+  const res = handleVerifyNode({ id: "REG_TEST", date: "2026-03-25" }, dir);
+  assert.equal(res.isError, undefined);
+  assert.match(res.content[0].text, /LastVerified: 2026-03-25/);
+
+  const parsed = parseNodes(readFileSync(join(dir, "regressions.md"), "utf-8"), "regressions.md")[0];
+  assert.equal(parsed.lastVerified, "2026-03-25");
+
+  const invalid = handleVerifyNode({ id: "REG_TEST", date: "not-a-date" }, dir);
+  assert.equal(invalid.isError, true);
+});
+
+test("handlePreflight matches conceptual intent against anti-patterns and invariants", () => {
+  const dir = mkdtempSync(join(tmpdir(), "simplegraph-preflight-"));
+  writeFileSync(
+    join(dir, "anti_patterns.md"),
+    formatNode({
+      id: "ANTI_WIDEN_TRY_CATCH",
+      type: "AntiPattern",
+      priority: "HIGH",
+      label: "Never widen exception handlers to generic catch",
+      summary: "Widening try catch suppresses critical errors in payment flow.",
+      tags: ["exception", "error", "catch"],
+      files: ["src/payments.ts"],
+      edges: [],
+      lastUpdated: "2026-01-01",
+    }) + "\n"
+  );
+  writeFileSync(
+    join(dir, "invariants.md"),
+    formatNode({
+      id: "INV_TYPED_ERRORS",
+      type: "Invariant",
+      priority: "HIGH",
+      label: "All service errors must be typed subclasses",
+      summary: "Services must throw typed exception classes instead of bare Error.",
+      tags: ["exception", "types"],
+      files: ["src/errors.ts"],
+      edges: [],
+      lastUpdated: "2026-01-01",
+    }) + "\n"
+  );
+
+  const result = handlePreflight({ intent: "widen exception handler to catch errors" }, dir);
+  assert.equal(result.isError, undefined);
+  const text = result.content[0].text;
+  assert.match(text, /ANTI_WIDEN_TRY_CATCH/);
+  assert.match(text, /INV_TYPED_ERRORS/);
+  assert.match(text, /Banned Anti-Patterns & Invariants to Respect/);
+});
+
+test("handleAddNode emits advisory near-duplicate warning on significant overlap without blocking", () => {
+  const dir = mkdtempSync(join(tmpdir(), "simplegraph-dupe-"));
+  writeFileSync(join(dir, "graph_index.md"), "# Index\n");
+  writeFileSync(
+    join(dir, "regressions.md"),
+    formatNode({
+      id: "REG_CACHE_LEAK",
+      type: "Regression",
+      priority: "MEDIUM",
+      label: "Cache leak in store",
+      summary: "Memory leak in redis cache store when connection drops.",
+      tags: ["cache", "redis"],
+      files: ["src/cache.ts", "src/store.ts"],
+      edges: [],
+      lastUpdated: "2026-01-01",
+    }) + "\n"
+  );
+
+  // Add a near duplicate sharing 2 files and keywords
+  const addRes = handleAddNode(
+    {
+      type: "Regression",
+      id: "REG_STORE_CACHE_LEAK",
+      label: "Store cache leak issue",
+      summary: "Memory leak found in cache store when redis connection drops.",
+      priority: "MEDIUM",
+      files: ["src/cache.ts", "src/store.ts"],
+    },
+    dir
+  );
+
+  assert.equal(addRes.isError, undefined, "Near-duplicate must never block addition");
+  assert.match(addRes.content[0].text, /⚠ 1 existing node\(s\) look similar/);
+  assert.match(addRes.content[0].text, /REG_CACHE_LEAK/);
 });

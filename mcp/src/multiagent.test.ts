@@ -199,3 +199,34 @@ test("add_node auto-regenerates the Quick Index", () => {
   const index = readFileSync(join(dir, "graph_index.md"), "utf-8");
   assert.ok(index.includes("WATCH_AUTO"), "add_node should refresh the index without a separate call");
 });
+
+test("regenerateIndexContent updates LastUpdated header dynamically from newest node date", () => {
+  const templateWithHeader = [
+    "# Knowledge Graph — Index",
+    "> **LastUpdated:** 2020-01-01",
+    "",
+    "| Category | Nodes | File |",
+    "|---|---|---|",
+    "| **Invariants** | _(none)_ | `invariants.md` |",
+  ].join("\n");
+
+  const nodes = [
+    parseNodes(nodeBlock("INV_A", "Invariant", "**LastUpdated:** 2026-02-01"), "invariants.md")[0],
+    parseNodes(nodeBlock("INV_B", "Invariant", "**LastVerified:** 2026-03-20\n**LastUpdated:** 2026-01-01"), "invariants.md")[0],
+  ];
+
+  const { content } = regenerateIndexContent(templateWithHeader, nodes);
+  assert.match(content, /> \*\*LastUpdated:\*\* 2026-03-20/);
+});
+
+test("regenerateIndex populates Anti-Patterns row when anti_patterns.md has nodes", () => {
+  const dir = graphWithIndex();
+  writeFileSync(
+    join(dir, "anti_patterns.md"),
+    `${nodeBlock("ANTI_RACE", "AntiPattern")}\n\n---\n\n${nodeBlock("ANTI_LEAK", "AntiPattern")}\n`
+  );
+  regenerateIndex(dir);
+  const index = readFileSync(join(dir, "graph_index.md"), "utf-8");
+  const row = index.split("\n").find(l => l.includes("**Anti-Patterns**"))!;
+  assert.match(row, /ANTI_LEAK, ANTI_RACE/);
+});

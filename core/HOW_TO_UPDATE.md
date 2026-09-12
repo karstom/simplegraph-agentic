@@ -57,7 +57,7 @@ Every node follows this exact format:
 
 ```markdown
 ## NODE: YOUR_NODE_ID
-**Type:** Component | Invariant | Regression | Decision | Watchlist
+**Type:** Component | Invariant | Regression | Decision | Watchlist | AntiPattern
 **Priority:** HIGH | MEDIUM | LOW
 **Label:** Human-readable name
 **Summary:** 2–4 sentences. What this is, why it matters, what went wrong (for regressions).
@@ -72,6 +72,18 @@ For Regression nodes, add:
 ```
 **REGRESSED_N_TIMES:** 1
 ```
+
+### Trust Calibration & Verification
+
+Nodes may also carry empirical verification fields:
+```markdown
+**Evidence:** `curl -s localhost:8080/health` → `200 OK`
+**LastVerified:** YYYY-MM-DD
+**Commit:** abc1234
+```
+- **Evidence:** Concrete verification command and expected output (`<command> → <expected>`).
+- **LastVerified:** When the claim was last checked against code or production (distinct from `LastUpdated`, which records when text changed). Stamped automatically via `simplegraph_verify_node` or `sg verify`.
+- **Commit:** Git commit SHA when the node was written or verified (captured automatically with zero writer burden). `sg stale` uses this to flag code churn on anchored files since verification.
 
 In multi-agent setups, a node may also carry attribution — who created it and in
 which session — so concurrent or conflicting nodes can be told apart after a
@@ -175,6 +187,7 @@ When the task routing table points the AI to multiple files, it should load HIGH
 | `Regression` | A bug that has occurred (especially recurring ones) | `regressions.md` |
 | `Decision` | An intentional architectural/design choice | `decisions.md` |
 | `Watchlist` | A code area requiring extra caution | `watchlists.md` |
+| `AntiPattern` | Prohibited pattern or known trap AI must never generate | `anti_patterns.md` |
 
 ### Edge Types
 

@@ -162,7 +162,7 @@ Three hops tell your agent what is fragile here and why.
 | Codex CLI | `AGENTS.md` + `.codex/config.toml` |
 | Anything else | Generic adapter for custom instructions |
 
-The installer picks the right one automatically (or pass multiple comma-separated tools, e.g. `--tool antigravity,claude-code` or interactive choices `1,3`). With the MCP server, the agent gets thirteen tools — the three that matter day to day being `simplegraph_check_files` before an edit, `simplegraph_anti_patterns` before generating code, and `simplegraph_add_node` after a fix. See [`mcp/README.md`](mcp/README.md).
+The installer picks the right one automatically (or pass multiple comma-separated tools, e.g. `--tool antigravity,claude-code` or interactive choices `1,3`). With the MCP server, the agent gets sixteen tools — the three that matter day to day being `simplegraph_check_files` before an edit, `simplegraph_anti_patterns` before generating code, and `simplegraph_add_node` after a fix. See [`mcp/README.md`](mcp/README.md).
 
 ### Determinism & enforcement by tool
 

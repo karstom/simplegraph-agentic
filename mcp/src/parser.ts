@@ -27,6 +27,12 @@ export interface GraphNode {
    * Component nodes; coarse enough not to churn on every commit.
    */
   paths: string[];
+  /** Structured verification command and expected output. */
+  evidence?: string;
+  /** Date the factual claim was last verified against code or production (YYYY-MM-DD). */
+  lastVerified?: string;
+  /** HEAD commit SHA at write time, for tracking code-churn staleness. */
+  commit?: string;
   lastUpdated: string;
   /** Who created the node — an agent/tool name or human, for multi-agent attribution. */
   author?: string;
@@ -150,6 +156,9 @@ export function parseNodes(content: string, sourceFile: string): GraphNode[] {
       files,
       symbols,
       paths,
+      evidence: getBlock("Evidence") || undefined,
+      lastVerified: get("LastVerified") || undefined,
+      commit: get("Commit") || undefined,
       lastUpdated: get("LastUpdated"),
       author: get("Author") || undefined,
       session: get("Session") || undefined,
@@ -195,6 +204,12 @@ export function formatNode(
     lines.push(`**Symbols:** ${node.symbols.map(s => `\`${s}\``).join(", ")}`);
   if (node.paths?.length)
     lines.push(`**Paths:** ${node.paths.map(p => `\`${p}\``).join(", ")}`);
+  if (node.evidence)
+    lines.push(`**Evidence:** ${node.evidence}`);
+  if (node.lastVerified)
+    lines.push(`**LastVerified:** ${node.lastVerified}`);
+  if (node.commit)
+    lines.push(`**Commit:** ${node.commit}`);
   lines.push(`**LastUpdated:** ${node.lastUpdated}`);
   if (node.author) lines.push(`**Author:** ${node.author}`);
   if (node.session) lines.push(`**Session:** ${node.session}`);

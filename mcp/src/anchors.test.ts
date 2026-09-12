@@ -20,6 +20,7 @@ import {
   symbolMatches,
   summarizeNodes,
   digestNodes,
+  briefNodes,
   envInt,
 } from "./index.js";
 
@@ -39,6 +40,11 @@ function node(overrides: Partial<GraphNode> & { id: string }): GraphNode {
     paths: overrides.paths ?? [],
     edges: overrides.edges ?? [],
     lastUpdated: overrides.lastUpdated ?? "2026-01-01",
+    regressedNTimes: overrides.regressedNTimes,
+    rootCause: overrides.rootCause,
+    evidence: overrides.evidence,
+    lastVerified: overrides.lastVerified,
+    commit: overrides.commit,
   });
   return parseNodes(text, "test.md")[0];
 }
@@ -488,4 +494,41 @@ test("the counter can also be set outright on a node that lacks the field", () =
   assert.equal(parseNodes(content, "r.md")[0].regressedNTimes, 4);
   // Inserted in formatNode's order: after Tags, before Edges.
   assert.match(content, /\*\*Tags:\*\*[^\n]*\n\*\*REGRESSED_N_TIMES:\*\*/);
+});
+
+test("direct symbol matches outrank direct file matches in matchNodes", () => {
+  const symNode = node({ id: "REG_SYM_ANCHOR", symbols: ["AuthService.parseToken"], files: [] });
+  const fileNode = node({ id: "REG_FILE_ANCHOR", files: ["src/token.ts"] });
+  const hits = matchNodes([fileNode, symNode], {
+    files: ["src/token.ts"],
+    symbols: ["parseToken"],
+  });
+  assert.equal(hits.length, 2);
+  assert.equal(hits[0].node.id, "REG_SYM_ANCHOR");
+  assert.equal(hits[1].node.id, "REG_FILE_ANCHOR");
+});
+
+test("recurrence heat (regressedNTimes >= 2) boosts ranking within same anchor tier", () => {
+  const hot = node({ id: "REG_HOT", files: ["src/a.ts"], regressedNTimes: 3 });
+  const cold = node({ id: "REG_COLD", files: ["src/a.ts"], regressedNTimes: 1 });
+  const hits = matchNodes([cold, hot], { files: ["src/a.ts"] });
+  assert.equal(hits[0].node.id, "REG_HOT");
+  assert.equal(hits[1].node.id, "REG_COLD");
+});
+
+test("briefNodes renders compact 1-2 line triage format with calibration signals", () => {
+  const n = node({
+    id: "REG_TRIAGE",
+    type: "Regression",
+    priority: "HIGH",
+    label: "Triage Label",
+    summary: "First sentence of summary here. Second sentence with extra details that should be omitted.",
+    files: ["src/triage.ts"],
+    regressedNTimes: 2,
+    lastVerified: "2026-03-01",
+  });
+  const hits = matchNodes([n], { files: ["src/triage.ts"] });
+  const brief = briefNodes(hits);
+  assert.match(brief, /^• \*\*REG_TRIAGE\*\* \[Regression\/HIGH\] \(recurred ×2, verified 2026-03-01\): Triage Label — First sentence of summary here\./);
+  assert.ok(!brief.includes("Second sentence"));
 });

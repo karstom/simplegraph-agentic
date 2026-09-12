@@ -46,6 +46,7 @@ Update the graph as part of the same commit:
 | Bug fixed | `simplegraph_add_node` (type: Regression), then `simplegraph_update_index` |
 | Decision made | `simplegraph_add_node` (type: Decision), then `simplegraph_update_index` |
 | Bug recurred | Clear Root-Cause Gate first (see `core/HOW_TO_UPDATE.md`), then `simplegraph_update_node` with `field:"REGRESSED_N_TIMES"`, `value:"increment"`, `root_cause:"<answers>"` — no same-class patch until gate is cleared |
+| Claim re-verified | `simplegraph_verify_node` with `id` and optional `evidence` |
 | Regression permanently resolved | `simplegraph_archive_regression` |
 
 Full protocol: `core/HOW_TO_UPDATE.md`
@@ -55,6 +56,7 @@ Full protocol: `core/HOW_TO_UPDATE.md`
 | Tool | When |
 |---|---|
 | `simplegraph_index` | Session start (mandatory) |
+| `simplegraph_preflight` | Before planning changes / touching files |
 | `simplegraph_check_files` | Before editing any file |
 | `simplegraph_anti_patterns` | Before generating code |
 | `simplegraph_get_node` | Fetch a known node by exact ID |
@@ -63,6 +65,7 @@ Full protocol: `core/HOW_TO_UPDATE.md`
 | `simplegraph_add_node` | After fixing a bug or making a decision |
 | `simplegraph_update_index` | Immediately after `simplegraph_add_node` |
 | `simplegraph_update_node` | Update a field on an existing node |
+| `simplegraph_verify_node` | When re-verifying a node's claim |
 | `simplegraph_archive_regression` | When a regression is permanently resolved |
 | `simplegraph_scratchpad` | Session notes not yet ready to commit as nodes |
 
