@@ -16,6 +16,7 @@
 #   --ref REF       branch or tag to install           (default: main)
 #   --no-mcp        skip building/wiring the MCP server
 #   --multi-repo    also install the shared/ org-level scaffold
+#   --hook/--no-hook wire / skip the Stop hook (Claude Code)
 #   -y, --yes       accept defaults for every prompt
 #   -h, --help      show this message
 #
@@ -62,6 +63,8 @@ while [ $# -gt 0 ]; do
                   PASS_THROUGH=("${PASS_THROUGH[@]:-}" --tool "$2"); shift 2 ;;
     --no-mcp)     WANT_MCP=false; PASS_THROUGH=("${PASS_THROUGH[@]:-}" --no-mcp); shift ;;
     --multi-repo) PASS_THROUGH=("${PASS_THROUGH[@]:-}" --multi-repo); shift ;;
+    --hook)       PASS_THROUGH=("${PASS_THROUGH[@]:-}" --hook); shift ;;
+    --no-hook)    PASS_THROUGH=("${PASS_THROUGH[@]:-}" --no-hook); shift ;;
     -y|--yes)     PASS_THROUGH=("${PASS_THROUGH[@]:-}" --yes); shift ;;
     -h|--help)    usage 0 ;;
     *)            die "unknown option: $1 (try --help)" ;;

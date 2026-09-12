@@ -423,6 +423,50 @@ EOF
     mkdir -p "${DEST}"
     cp "${SCRIPT_DIR}/adapters/cursor/memory.mdc" "${DEST}/memory.mdc"
     ok "Cursor adapter $([ "${UPGRADE_MODE}" = true ] && echo "updated" || echo "installed") → .cursor/rules/memory.mdc"
+
+    # Offer to generate .cursor/mcp.json with MCP server config
+    echo ""
+    ask "Generate .cursor/mcp.json with MCP server config? [Y/n]"
+    answer cursor_mcp_choice "${MCP_DEFAULT}" "${PRESET_MCP}"
+    if [[ ! "${cursor_mcp_choice}" =~ ^[Nn]$ ]]; then
+      CURSOR_DIR="${TARGET}/.cursor"
+      CURSOR_MCP="${CURSOR_DIR}/mcp.json"
+      MCP_DIST="$(cd "${SCRIPT_DIR}/mcp" && pwd)/dist/index.js"
+      mkdir -p "${CURSOR_DIR}"
+      if [ -f "${CURSOR_MCP}" ]; then
+        warn "${CURSOR_MCP} already exists — add the block below manually:"
+        echo ""
+        cat <<EOF
+  "mcpServers": {
+    "simplegraph": {
+      "command": "node",
+      "args": ["${MCP_DIST}"],
+      "env": { "SIMPLEGRAPH_ROOT": "\${workspaceFolder}/core" }
+    }
+  }
+EOF
+      else
+        cat > "${CURSOR_MCP}" <<EOF
+{
+  "mcpServers": {
+    "simplegraph": {
+      "command": "node",
+      "args": ["${MCP_DIST}"],
+      "env": {
+        "SIMPLEGRAPH_ROOT": "\${workspaceFolder}/core"
+      }
+    }
+  }
+}
+EOF
+        ok "Cursor MCP config written → .cursor/mcp.json"
+      fi
+      if [ -f "${MCP_DIST}" ]; then
+        ok "MCP server ready → ${MCP_DIST}"
+      else
+        warn "Build the MCP server before use: cd ${SCRIPT_DIR}/mcp && npm install && npm run build"
+      fi
+    fi
     ;;
   3)
     CLAUDE_MD="${TARGET}/CLAUDE.md"
@@ -514,10 +558,11 @@ EOF
     echo "The 'document before you finish' hook reminds the agent to record a"
     echo "graph node when it edits a HIGH-priority file without one — the capture"
     echo "step CI can't enforce. It nudges once per task and fails open."
-    ask "Wire this Stop hook into .claude/settings.json? [y/N]"
-    answer hook_choice "N" "${PRESET_HOOK}"
-    if [[ "${hook_choice}" =~ ^[Yy]$ ]]; then
-      bash "${SCRIPT_DIR}/scripts/install_doc_hook.sh" "${TARGET}" \
+    ask "Wire this Stop hook into .claude/settings.json? [Y/n]"
+    answer hook_choice "Y" "${PRESET_HOOK}"
+    if [[ ! "${hook_choice}" =~ ^[Nn]$ ]]; then
+      MCP_CLI="$(cd "${SCRIPT_DIR}/mcp" && pwd)/dist/seed/cli.js"
+      bash "${SCRIPT_DIR}/scripts/install_doc_hook.sh" "${TARGET}" "${MCP_CLI}" \
         || warn "Could not wire the hook — see scripts/install_doc_hook.sh"
     else
       say "Skipped. Wire it later: bash ${SCRIPT_DIR}/scripts/install_doc_hook.sh ${TARGET}"
@@ -538,6 +583,50 @@ EOF
     else
       cp "${SCRIPT_DIR}/adapters/copilot/copilot-instructions-memory.md" "${COPILOT_DEST}"
       ok "Copilot adapter installed → .github/copilot-instructions.md"
+    fi
+
+    # Offer to generate .vscode/mcp.json with MCP server config
+    echo ""
+    ask "Generate .vscode/mcp.json with MCP server config? [Y/n]"
+    answer copilot_mcp_choice "${MCP_DEFAULT}" "${PRESET_MCP}"
+    if [[ ! "${copilot_mcp_choice}" =~ ^[Nn]$ ]]; then
+      VSCODE_DIR="${TARGET}/.vscode"
+      VSCODE_MCP="${VSCODE_DIR}/mcp.json"
+      MCP_DIST="$(cd "${SCRIPT_DIR}/mcp" && pwd)/dist/index.js"
+      mkdir -p "${VSCODE_DIR}"
+      if [ -f "${VSCODE_MCP}" ]; then
+        warn "${VSCODE_MCP} already exists — add the block below manually:"
+        echo ""
+        cat <<EOF
+  "servers": {
+    "simplegraph": {
+      "command": "node",
+      "args": ["${MCP_DIST}"],
+      "env": { "SIMPLEGRAPH_ROOT": "\${workspaceFolder}/core" }
+    }
+  }
+EOF
+      else
+        cat > "${VSCODE_MCP}" <<EOF
+{
+  "servers": {
+    "simplegraph": {
+      "command": "node",
+      "args": ["${MCP_DIST}"],
+      "env": {
+        "SIMPLEGRAPH_ROOT": "\${workspaceFolder}/core"
+      }
+    }
+  }
+}
+EOF
+        ok "VS Code / Copilot MCP config written → .vscode/mcp.json"
+      fi
+      if [ -f "${MCP_DIST}" ]; then
+        ok "MCP server ready → ${MCP_DIST}"
+      else
+        warn "Build the MCP server before use: cd ${SCRIPT_DIR}/mcp && npm install && npm run build"
+      fi
     fi
     ;;
   5)
