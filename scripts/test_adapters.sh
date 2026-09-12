@@ -271,6 +271,42 @@ else
   fail "setup.sh hung or failed without a terminal (see /tmp/sg_setup_ci.txt)"
 fi
 
+section "Multi-tool install test (--tool antigravity,claude-code)"
+TMPDIR_MULTI=$(mktemp -d /tmp/sg_test_multi.XXXXXX)
+trap "rm -rf ${TMPDIR_AG} ${TMPDIR_NI} ${TMPDIR_CI} ${TMPDIR_MULTI}" EXIT
+
+if run_limited 120 bash "${REPO_DIR}/setup.sh" "${TMPDIR_MULTI}" --tool antigravity,claude-code --mcp --yes \
+     > /tmp/sg_setup_multi.txt 2>&1; then
+  pass "setup.sh --tool antigravity,claude-code --mcp --yes completes without input"
+else
+  fail "setup.sh with multiple tools failed (see /tmp/sg_setup_multi.txt)"
+fi
+[ -f "${TMPDIR_MULTI}/AGENTS.md" ] && pass "multi-tool: AGENTS.md installed" \
+                               || fail "multi-tool: AGENTS.md missing"
+[ -f "${TMPDIR_MULTI}/.agents/plugins/simplegraph/plugin.json" ] && pass "multi-tool: Antigravity plugin installed" \
+                               || fail "multi-tool: Antigravity plugin missing"
+[ -f "${TMPDIR_MULTI}/CLAUDE.md" ] && pass "multi-tool: CLAUDE.md installed" \
+                               || fail "multi-tool: CLAUDE.md missing"
+[ -f "${TMPDIR_MULTI}/.mcp.json" ] && pass "multi-tool: .mcp.json installed for Claude Code" \
+                               || fail "multi-tool: .mcp.json missing"
+[ -f "${TMPDIR_MULTI}/.claude/settings.json" ] && grep -q '"Stop"' "${TMPDIR_MULTI}/.claude/settings.json" \
+  && pass "multi-tool: Claude Code Stop hook configured" \
+  || fail "multi-tool: Claude Code Stop hook missing"
+[ -d "${TMPDIR_MULTI}/core" ] && pass "multi-tool: core graph installed" \
+                             || fail "multi-tool: core/ missing"
+
+section "Multi-tool interactive piped test (1,2)"
+TMPDIR_PIPE=$(mktemp -d /tmp/sg_test_pipe.XXXXXX)
+trap "rm -rf ${TMPDIR_AG} ${TMPDIR_NI} ${TMPDIR_CI} ${TMPDIR_MULTI} ${TMPDIR_PIPE}" EXIT
+
+printf "n\n1,2\ny\ny\n" | bash "${REPO_DIR}/setup.sh" "${TMPDIR_PIPE}" > /tmp/sg_setup_pipe.txt 2>&1 || true
+[ -f "${TMPDIR_PIPE}/AGENTS.md" ] && pass "piped multi-tool: AGENTS.md installed" \
+                             || fail "piped multi-tool: AGENTS.md missing"
+[ -f "${TMPDIR_PIPE}/.cursor/rules/memory.mdc" ] && pass "piped multi-tool: Cursor rule installed" \
+                             || fail "piped multi-tool: Cursor rule missing"
+[ -f "${TMPDIR_PIPE}/.cursor/mcp.json" ] && pass "piped multi-tool: Cursor mcp.json installed" \
+                             || fail "piped multi-tool: Cursor mcp.json missing"
+
 section "Installer entrypoint"
 if [ -f "${REPO_DIR}/install.sh" ]; then
   pass "install.sh present"

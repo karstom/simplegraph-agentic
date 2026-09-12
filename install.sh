@@ -11,6 +11,7 @@
 # Options:
 #   --dir PATH      project to install into            (default: current directory)
 #   --tool NAME     antigravity|cursor|claude-code|copilot|zed|codex|generic|skip
+#                   (supports comma-separated tools, e.g. antigravity,claude-code)
 #                   (default: auto-detected from the project)
 #   --home PATH     where simplegraph itself lives     (default: ~/.simplegraph)
 #   --ref REF       branch or tag to install           (default: main)
