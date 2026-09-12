@@ -9,6 +9,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { parseNodes, type GraphNode } from "./parser.js";
+import { getCommitDistance } from "./gitutil.js";
 
 export interface StaleDateHit {
   id: string;
@@ -29,12 +30,20 @@ export interface MissingSymbolHit {
   file: string;
 }
 
+export interface CodeChurnHit {
+  id: string;
+  commit: string;
+  count: number;
+  file: string;
+}
+
 export interface StaleCheckResult {
   ok: boolean;
   staleDates: StaleDateHit[];
   missingFiles: MissingPathHit[];
   missingPaths: MissingPathHit[];
   missingSymbols: MissingSymbolHit[];
+  codeChurn?: CodeChurnHit[];
   output: string;
 }
 
@@ -118,13 +127,15 @@ export function runStaleCheck(options: StaleCheckOptions): StaleCheckResult {
     item.reasons.push(reason);
   };
 
-  // 1. Check old LastUpdated
+  // 1. Check old LastUpdated / LastVerified
   const staleDates: StaleDateHit[] = [];
   for (const node of targetNodes) {
-    if (node.lastUpdated && /^\d{4}-\d{2}-\d{2}$/.test(node.lastUpdated)) {
-      if (node.lastUpdated < cutoffDateStr) {
-        staleDates.push({ id: node.id, date: node.lastUpdated, file: node.sourceFile });
-        addReason(node, `unmodified since ${node.lastUpdated} (> ${maxAgeDays}d)`);
+    const effectiveDate = node.lastVerified || node.lastUpdated;
+    if (effectiveDate && /^\d{4}-\d{2}-\d{2}$/.test(effectiveDate)) {
+      if (effectiveDate < cutoffDateStr) {
+        staleDates.push({ id: node.id, date: effectiveDate, file: node.sourceFile });
+        const verb = node.lastVerified ? "unverified" : "unmodified";
+        addReason(node, `${verb} since ${effectiveDate} (> ${maxAgeDays}d)`);
       }
     }
   }
@@ -177,6 +188,18 @@ export function runStaleCheck(options: StaleCheckOptions): StaleCheckResult {
     }
   }
 
+  // 5. Check code churn on anchored files since write commit
+  const codeChurn: CodeChurnHit[] = [];
+  for (const node of targetNodes) {
+    if (node.commit && node.files.length > 0) {
+      const distance = getCommitDistance(repoRoot, node.commit, node.files);
+      if (distance > 0) {
+        codeChurn.push({ id: node.id, commit: node.commit, count: distance, file: node.sourceFile });
+        addReason(node, `code under node changed ${distance} time(s) since write at ${node.commit}`);
+      }
+    }
+  }
+
   const ok = findingsMap.size === 0;
 
   if (ok) {
@@ -200,6 +223,7 @@ export function runStaleCheck(options: StaleCheckOptions): StaleCheckResult {
     missingFiles,
     missingPaths,
     missingSymbols,
+    codeChurn,
     output: linesOut.join("\n"),
   };
 }

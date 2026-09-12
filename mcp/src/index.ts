@@ -23,6 +23,7 @@ import { buildContext } from "./seed/mine.js";
 import { selectDecisionCandidates, decisionIdFor, pullRequestTrail } from "./seed/candidates.js";
 import { atomicWriteFileSync, withGraphLock } from "./fsutil.js";
 import { regenerateIndex } from "./reindex.js";
+import { getHeadCommit } from "./gitutil.js";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -94,7 +95,7 @@ function writeGraphFile(name: string, content: string, root: string = GRAPH_ROOT
 }
 
 function getNodesFromRoot(root: string, tag?: string): GraphNode[] {
-  const coreFiles = ["regressions.md", "invariants.md", "decisions.md", "watchlists.md"];
+  const coreFiles = ["regressions.md", "invariants.md", "decisions.md", "watchlists.md", "anti_patterns.md"];
   const nodes: GraphNode[] = [];
 
   for (const f of coreFiles) {
@@ -132,12 +133,13 @@ function getAllNodes(): GraphNode[] {
 
 function targetFileForType(type: string, id: string): string {
   switch (type.toLowerCase()) {
-    case "component":  return `components/${id.toLowerCase()}.md`;
-    case "invariant":  return "invariants.md";
-    case "regression": return "regressions.md";
-    case "decision":   return "decisions.md";
-    case "watchlist":  return "watchlists.md";
-    default:           return "watchlists.md";
+    case "component":   return `components/${id.toLowerCase()}.md`;
+    case "invariant":   return "invariants.md";
+    case "regression":  return "regressions.md";
+    case "decision":    return "decisions.md";
+    case "watchlist":   return "watchlists.md";
+    case "antipattern": return "anti_patterns.md";
+    default:            return "watchlists.md";
   }
 }
 
@@ -209,6 +211,28 @@ export function digestNodes(hits: NodeHit[]): string {
       `  _matched on: ${h.reasons.join("; ")}_\n` +
       `  ${clip(n.summary, DIGEST_SUMMARY_CHARS)}`
     );
+  }).join("\n");
+}
+
+/**
+ * Fast, dense triage view: 1-2 lines per node with key calibration signals.
+ * Format: • **ID** [TYPE/PRIORITY] (recurred ×N, verified DATE): Label — First actionable summary sentence
+ */
+export function briefNodes(hits: NodeHit[]): string {
+  return hits.map(h => {
+    const n = h.node;
+    const parts: string[] = [];
+    if (n.regressedNTimes !== undefined && n.regressedNTimes >= 2) {
+      parts.push(`recurred ×${n.regressedNTimes}`);
+    }
+    const verified = n.lastVerified || n.lastUpdated;
+    if (verified) {
+      parts.push(n.lastVerified ? `verified ${n.lastVerified}` : `updated ${n.lastUpdated}`);
+    }
+    const details = parts.length ? ` (${parts.join(", ")})` : "";
+    const firstSentence = n.summary.split(/(?<=[.!?])\s+/)[0] || n.summary;
+    const cleanSummary = clip(firstSentence.trim(), 120);
+    return `• **${n.id}** [${n.type}/${n.priority}]${details}: ${n.label} — ${cleanSummary}`;
   }).join("\n");
 }
 
@@ -327,6 +351,91 @@ export interface NodeHit {
   reasons: string[];
   /** True when the node is anchored to something being edited, not merely reachable from it. */
   direct: boolean;
+  /** Multi-factor ranking score */
+  score?: number;
+}
+
+export function isRecentDate(dateStr?: string, maxDays = 30): boolean {
+  if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return false;
+  const t = Date.parse(dateStr);
+  if (isNaN(t)) return false;
+  const now = Date.now();
+  const diffDays = (now - t) / (1000 * 60 * 60 * 24);
+  return diffDays >= 0 && diffDays <= maxDays;
+}
+
+const STOP_WORDS = new Set([
+  "a", "about", "above", "after", "again", "against", "all", "am", "an", "and",
+  "any", "are", "aren't", "as", "at", "be", "because", "been", "before", "being",
+  "below", "between", "both", "but", "by", "can", "cannot", "could", "did", "do",
+  "does", "doing", "don't", "down", "during", "each", "few", "for", "from", "further",
+  "had", "has", "have", "having", "he", "her", "here", "hers", "herself", "him",
+  "himself", "his", "how", "i", "if", "in", "into", "is", "isn't", "it", "its",
+  "itself", "let's", "me", "more", "most", "mustn't", "my", "myself", "no", "nor",
+  "not", "of", "off", "on", "once", "only", "or", "other", "ought", "our", "ours",
+  "ourselves", "out", "over", "own", "same", "shan't", "she", "should", "so", "some",
+  "such", "than", "that", "the", "their", "theirs", "them", "themselves", "then",
+  "there", "these", "they", "this", "those", "through", "to", "too", "under", "until",
+  "up", "very", "was", "wasn't", "we", "were", "weren't", "what", "when", "where",
+  "which", "while", "who", "whom", "why", "with", "won't", "would", "you", "your",
+  "yours", "yourself", "yourselves"
+]);
+
+export function extractKeywords(text: string): Set<string> {
+  const words = text.toLowerCase().split(/[^a-z0-9_-]+/).filter(w => w.length >= 3 && !STOP_WORDS.has(w));
+  return new Set(words);
+}
+
+export interface NearDuplicateHit {
+  id: string;
+  sharedFiles: number;
+  sharedSymbols: number;
+  sharedKeywords: number;
+  score: number;
+}
+
+export function findNearDuplicates(
+  candidate: { id: string; files: string[]; symbols: string[]; label: string; summary: string },
+  nodes: GraphNode[]
+): NearDuplicateHit[] {
+  const candKeywords = extractKeywords(`${candidate.label} ${candidate.summary}`);
+  const hits: NearDuplicateHit[] = [];
+
+  for (const node of nodes) {
+    if (node.id === candidate.id) continue;
+    const sharedFiles = candidate.files.filter(cf =>
+      node.files.some(nf => pathMatches(nf, cf))
+    ).length;
+    const sharedSymbols = candidate.symbols.filter(cs =>
+      node.symbols.some(ns => symbolMatches(ns, cs))
+    ).length;
+
+    const nodeKeywords = extractKeywords(`${node.label} ${node.summary}`);
+    let sharedKeywords = 0;
+    for (const kw of candKeywords) {
+      if (nodeKeywords.has(kw)) sharedKeywords++;
+    }
+
+    const isSimilar =
+      sharedFiles >= 2 ||
+      (sharedFiles >= 1 && sharedKeywords >= 3) ||
+      (sharedSymbols >= 1 && sharedKeywords >= 2) ||
+      (sharedFiles >= 1 && sharedSymbols >= 1) ||
+      sharedKeywords >= 4;
+
+    if (isSimilar) {
+      const score = sharedFiles * 10 + sharedSymbols * 10 + sharedKeywords * 2;
+      hits.push({
+        id: node.id,
+        sharedFiles,
+        sharedSymbols,
+        sharedKeywords,
+        score,
+      });
+    }
+  }
+
+  return hits.sort((a, b) => b.score - a.score || (a.id < b.id ? -1 : 1));
 }
 
 /**
@@ -387,11 +496,37 @@ export function matchNodes(
 
     if (!reasons.length) continue;
     const direct = Boolean(directFiles.length || directSymbols.length || directPaths.length);
-    hits.push({ node, reasons, direct });
+
+    // Multi-factor ranking:
+    // 1. Direct vs Transitive baseline
+    let score = direct ? 1000 : 0;
+    // 2. Anchor precision
+    if (directSymbols.length) score += 200;
+    else if (directFiles.length) score += 100;
+    else if (directPaths.length) score += 50;
+
+    if (radiusSymbols.length) score += 20;
+    else if (radiusFiles.length) score += 10;
+    else if (radiusPaths.length) score += 5;
+
+    // 3. Recurrence Heat
+    if ((node.regressedNTimes ?? 0) >= 2) score += 40;
+
+    // 4. Priority
+    if (node.priority === "HIGH") score += 30;
+    else if (node.priority === "MEDIUM") score += 10;
+
+    // 5. Trust / Freshness
+    if (isRecentDate(node.lastVerified || node.lastUpdated, 30)) score += 20;
+
+    // 6. Type importance
+    const tLower = node.type.toLowerCase();
+    if (tLower === "invariant" || tLower === "antipattern") score += 15;
+
+    hits.push({ node, reasons, direct, score });
   }
 
-  const rank = (h: NodeHit) => (h.direct ? 0 : 2) + (h.node.priority === "HIGH" ? 0 : 1);
-  return hits.sort((a, b) => rank(a) - rank(b));
+  return hits.sort((a, b) => (b.score ?? 0) - (a.score ?? 0) || (a.node.id < b.node.id ? -1 : 1));
 }
 
 /**
@@ -522,11 +657,15 @@ function handleUpdateNodeLocked(
     // would make an existing graph un-anchorable without hand-editing every
     // node, so insert the field instead — after **Files:**, matching the order
     // formatNode produces.
-    if (field === "Symbols" || field === "Paths" || field === "REGRESSED_N_TIMES") {
-      // Keep formatNode's field order: Tags, REGRESSED_N_TIMES, … Files, Symbols, Paths.
+    if (field === "Symbols" || field === "Paths" || field === "REGRESSED_N_TIMES" || field === "Evidence" || field === "LastVerified" || field === "Commit") {
+      // Keep formatNode's field order: Tags, REGRESSED_N_TIMES, … Files, Symbols, Paths, Evidence, LastVerified, Commit, LastUpdated.
       const anchor =
         field === "REGRESSED_N_TIMES" ? "Tags"
         : field === "Paths" && /\*\*Symbols:\*\*/.test(block) ? "Symbols"
+        : field === "Evidence" && /\*\*Paths:\*\*/.test(block) ? "Paths"
+        : field === "Evidence" && /\*\*Symbols:\*\*/.test(block) ? "Symbols"
+        : field === "LastVerified" && /\*\*Evidence:\*\*/.test(block) ? "Evidence"
+        : field === "Commit" && /\*\*LastVerified:\*\*/.test(block) ? "LastVerified"
         : "Files";
       block = insertAfterField(block, anchor, `**${field}:** ${resolvedValue}`);
       atomicWriteFileSync(filePath, loc.before + block + loc.after);
@@ -613,8 +752,98 @@ function handleCorrectNodeLocked(
     block = insertAfterField(block, "Files", `**LastUpdated:** ${date}`);
   }
 
+  const repoRoot = path.dirname(graphRoot);
+  const headCommit = getHeadCommit(repoRoot);
+  if (headCommit) {
+    const commitPattern = /(\*\*Commit:\*\*[ \t]*)\S+/;
+    if (commitPattern.test(block)) {
+      block = block.replace(commitPattern, (_m, p1: string) => `${p1}${headCommit}`);
+    } else {
+      const anchor =
+        /\*\*LastVerified:\*\*/.test(block) ? "LastVerified"
+        : /\*\*Evidence:\*\*/.test(block) ? "Evidence"
+        : /\*\*Paths:\*\*/.test(block) ? "Paths"
+        : /\*\*Symbols:\*\*/.test(block) ? "Symbols"
+        : "Files";
+      block = insertAfterField(block, anchor, `**Commit:** ${headCommit}`);
+    }
+  }
+
   atomicWriteFileSync(filePath, loc.before + block + loc.after);
-  return ok(`✓ Recorded correction for NODE: ${id} in ${node.sourceFile} (LastUpdated: ${date}).`);
+  const commitMsg = headCommit ? `, Commit: ${headCommit}` : "";
+  return ok(`✓ Recorded correction for NODE: ${id} in ${node.sourceFile} (LastUpdated: ${date}${commitMsg}).`);
+}
+
+export function handleVerifyNode(
+  args: { id: string; date?: string },
+  graphRoot: string,
+  sharedRoot: string | null = null
+): ToolResult {
+  return withGraphLock(graphRoot, () => handleVerifyNodeLocked(args, graphRoot, sharedRoot));
+}
+
+function handleVerifyNodeLocked(
+  args: { id: string; date?: string },
+  graphRoot: string,
+  sharedRoot: string | null
+): ToolResult {
+  const { id } = args;
+  const date = args.date?.trim() || new Date().toISOString().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return fail(`Invalid date format "${date}". Expected YYYY-MM-DD.`);
+  }
+
+  const localNodes = getNodesFromRoot(graphRoot);
+  const sharedNodes = sharedRoot ? getNodesFromRoot(sharedRoot, "shared") : [];
+  const allNodes = [...localNodes, ...sharedNodes];
+
+  const node = allNodes.find(n => n.id === id);
+  if (!node) return fail(`Node ${id} not found in graph.`);
+
+  const isShared = node.sourceFile.startsWith("[shared]");
+  if (isShared) return fail(`Node ${id} is in the shared read-only graph. Verify it in its source repo.`);
+
+  const filePath = path.join(graphRoot, node.sourceFile);
+  const content = fs.readFileSync(filePath, "utf-8");
+
+  const loc = findNodeBlock(content, id);
+  if (!loc) {
+    return fail(`Could not locate the "## NODE: ${id}" heading in ${node.sourceFile}.`);
+  }
+  let block = loc.block;
+
+  // Update or insert LastVerified
+  const verifiedPattern = /(\*\*LastVerified:\*\*[ \t]*)\S+/;
+  if (verifiedPattern.test(block)) {
+    block = block.replace(verifiedPattern, (_m, p1: string) => `${p1}${date}`);
+  } else {
+    const anchor =
+      /\*\*Evidence:\*\*/.test(block) ? "Evidence"
+      : /\*\*Paths:\*\*/.test(block) ? "Paths"
+      : /\*\*Symbols:\*\*/.test(block) ? "Symbols"
+      : "Files";
+    block = insertAfterField(block, anchor, `**LastVerified:** ${date}`);
+  }
+
+  // Auto-stamp Commit
+  const repoRoot = path.dirname(graphRoot);
+  const headCommit = getHeadCommit(repoRoot);
+  if (headCommit) {
+    const commitPattern = /(\*\*Commit:\*\*[ \t]*)\S+/;
+    if (commitPattern.test(block)) {
+      block = block.replace(commitPattern, (_m, p1: string) => `${p1}${headCommit}`);
+    } else {
+      block = insertAfterField(block, "LastVerified", `**Commit:** ${headCommit}`);
+    }
+  }
+
+  atomicWriteFileSync(filePath, loc.before + block + loc.after);
+  const index = regenerateIndex(graphRoot);
+  const indexNote = index.warnings.length
+    ? `\n⚠ Index: ${index.warnings.join("; ")}`
+    : `\n✓ graph_index.md regenerated.`;
+
+  return ok(`✓ Verified NODE: ${id} (LastVerified: ${date}${headCommit ? `, Commit: ${headCommit}` : ""}).${indexNote}`);
 }
 
 function extractInvariantTargets(edges: string[]): string[] {
@@ -636,6 +865,7 @@ export function handleAddNode(
     type: string; id: string; label: string; summary: string; priority: string;
     tags?: string[]; files?: string[]; symbols?: string[]; paths?: string[];
     edges?: string[];
+    evidence?: string; lastVerified?: string; commit?: string;
     regressedNTimes?: number; root_cause?: string;
     author?: string; session?: string;
   },
@@ -662,6 +892,7 @@ function handleAddNodeLocked(
     type: string; id: string; label: string; summary: string; priority: string;
     tags?: string[]; files?: string[]; symbols?: string[]; paths?: string[];
     edges?: string[];
+    evidence?: string; lastVerified?: string; commit?: string;
     regressedNTimes?: number; root_cause?: string;
     author?: string; session?: string;
   },
@@ -695,12 +926,34 @@ function handleAddNodeLocked(
       return fail(`Edge target(s) not found: ${broken.join(", ")}. Create those nodes first or check IDs with simplegraph_search.`);
   }
 
+  // Advisory near-duplicate detection (never blocks creation)
+  const nearDupes = findNearDuplicates(
+    { id, files, symbols, label, summary },
+    allNodes
+  );
+  let dupeWarning = "";
+  if (nearDupes.length > 0) {
+    const top = nearDupes[0];
+    const details = [
+      top.sharedFiles > 0 ? `${top.sharedFiles} file(s)` : "",
+      top.sharedSymbols > 0 ? `${top.sharedSymbols} symbol(s)` : "",
+      top.sharedKeywords > 0 ? `${top.sharedKeywords} keyword(s)` : "",
+    ].filter(Boolean).join(" and ");
+    dupeWarning = `\n\n⚠ ${nearDupes.length} existing node(s) look similar (e.g. ${top.id} shares ${details}) — consider updating or extending instead of duplicating.`;
+  }
+
   const rc = root_cause?.trim() || undefined;
   const today = new Date().toISOString().slice(0, 10);
+  const repoRoot = path.dirname(graphRoot);
+  const autoCommit = getHeadCommit(repoRoot);
+  const resolvedCommit = args.commit || autoCommit;
   const resolvedAuthor = author?.trim() || DEFAULT_AUTHOR;
   const resolvedSession = session?.trim() || DEFAULT_SESSION;
   const nodeText = formatNode({
     id, type, priority, label, summary, tags, files, symbols, paths, edges,
+    evidence: args.evidence,
+    lastVerified: args.lastVerified,
+    commit: resolvedCommit,
     lastUpdated: today, regressedNTimes, rootCause: rc,
     author: resolvedAuthor, session: resolvedSession,
   });
@@ -774,10 +1027,146 @@ function handleAddNodeLocked(
     : "";
 
   return ok(
-    `✓ Added NODE: ${id} to ${targetFile}${attrib}.${indexNote}${propMsg}\n\n` +
+    `✓ Added NODE: ${id} to ${targetFile}${attrib}.${indexNote}${propMsg}${dupeWarning}\n\n` +
     `Next steps:\n` +
     `1. Run bash core/scripts/consistency_check.sh to verify no broken edges (or duplicate IDs).\n` +
     `2. Commit both the code change and the graph update together.`
+  );
+}
+
+export function handlePreflight(
+  args: { intent: string },
+  graphRoot: string = GRAPH_ROOT,
+  sharedRoot: string | null = SHARED_ROOT
+): ToolResult {
+  const { intent } = args;
+  if (!intent || !intent.trim()) {
+    return fail("Intent cannot be empty. Describe what you plan to do (e.g. 'widen exception handler').");
+  }
+
+  const cleanIntent = intent.trim().toLowerCase();
+  const candKeywords = extractKeywords(cleanIntent);
+  if (candKeywords.size === 0) {
+    return ok(`No specific keywords identified in "${intent}".`);
+  }
+
+  const localNodes = getNodesFromRoot(graphRoot);
+  const sharedNodes = sharedRoot ? getNodesFromRoot(sharedRoot, "shared") : [];
+  const allNodes = [...localNodes, ...sharedNodes];
+
+  interface PreflightHit {
+    node: GraphNode;
+    score: number;
+    reasons: string[];
+  }
+
+  const hits: PreflightHit[] = [];
+
+  for (const node of allNodes) {
+    let score = 0;
+    const reasons: string[] = [];
+
+    // Tag matches (+30 per tag)
+    for (const tag of node.tags) {
+      if (candKeywords.has(tag.toLowerCase())) {
+        score += 30;
+        reasons.push(`tag \`${tag}\``);
+      }
+    }
+
+    // Label keywords (+20 per keyword)
+    const labelKws = extractKeywords(node.label);
+    for (const kw of candKeywords) {
+      if (labelKws.has(kw)) {
+        score += 20;
+        reasons.push(`label keyword "${kw}"`);
+      }
+    }
+
+    // Summary keywords (+10 per keyword)
+    const summaryKws = extractKeywords(node.summary);
+    for (const kw of candKeywords) {
+      if (summaryKws.has(kw)) {
+        score += 10;
+        reasons.push(`summary keyword "${kw}"`);
+      }
+    }
+
+    // Phrase match in summary or label (+40)
+    if (cleanIntent.length >= 6 && (node.summary.toLowerCase().includes(cleanIntent) || node.label.toLowerCase().includes(cleanIntent))) {
+      score += 40;
+      reasons.push(`phrase match "${cleanIntent}"`);
+    }
+
+    // RootCause match (+15)
+    if (node.rootCause) {
+      const rcKws = extractKeywords(node.rootCause);
+      for (const kw of candKeywords) {
+        if (rcKws.has(kw)) {
+          score += 15;
+          reasons.push(`root cause keyword "${kw}"`);
+        }
+      }
+    }
+
+    if (score > 0) {
+      const typeLower = node.type.toLowerCase();
+      if (typeLower === "antipattern" || typeLower === "invariant") {
+        score += 25;
+      }
+      if (node.priority === "HIGH") score += 15;
+      if ((node.regressedNTimes ?? 0) >= 2) score += 20;
+
+      hits.push({ node, score, reasons: [...new Set(reasons)] });
+    }
+  }
+
+  if (hits.length === 0) {
+    return ok(`✓ Preflight check clean: no invariants, anti-patterns, or decisions matched intent: "${intent}". Proceed to file inspection.`);
+  }
+
+  hits.sort((a, b) => b.score - a.score || (a.node.id < b.node.id ? -1 : 1));
+
+  const antiPatternsAndInvariants = hits.filter(h => ["antipattern", "invariant"].includes(h.node.type.toLowerCase()));
+  const decisions = hits.filter(h => h.node.type.toLowerCase() === "decision");
+  const regressionsAndWatchlists = hits.filter(h => ["regression", "watchlist"].includes(h.node.type.toLowerCase()));
+  const others = hits.filter(h => !["antipattern", "invariant", "decision", "regression", "watchlist"].includes(h.node.type.toLowerCase()));
+
+  const sections: string[] = [];
+
+  const formatPreflightGroup = (title: string, group: PreflightHit[]) => {
+    if (!group.length) return "";
+    const items = group.map(h => {
+      const n = h.node;
+      const recur = n.regressedNTimes !== undefined && n.regressedNTimes >= 2 ? ` (recurred ×${n.regressedNTimes})` : "";
+      const verified = n.lastVerified ? ` [verified ${n.lastVerified}]` : "";
+      const filesLine = n.files.length ? `\n  _Files: ${n.files.map(f => '`' + f + '`').join(", ")}_` : "";
+      const firstSent = n.summary.split(/(?<=[.!?])\s+/)[0] || n.summary;
+      return (
+        `• **${n.id}** [${n.type}/${n.priority}]${recur}${verified}: ${n.label}\n` +
+        `  ${clip(firstSent.trim(), 160)}${filesLine}`
+      );
+    }).join("\n\n");
+    return `### ${title} (${group.length})\n\n${items}`;
+  };
+
+  if (antiPatternsAndInvariants.length) {
+    sections.push(formatPreflightGroup("Banned Anti-Patterns & Invariants to Respect", antiPatternsAndInvariants));
+  }
+  if (decisions.length) {
+    sections.push(formatPreflightGroup("Architectural Decisions Governing This Concept", decisions));
+  }
+  if (regressionsAndWatchlists.length) {
+    sections.push(formatPreflightGroup("Known Regressions & Watchlists in This Area", regressionsAndWatchlists));
+  }
+  if (others.length) {
+    sections.push(formatPreflightGroup("Related Components", others));
+  }
+
+  return ok(
+    `⚠ Preflight Alert: Found ${hits.length} relevant rule(s)/node(s) for intent: "${intent}":\n\n` +
+    sections.join("\n\n") + "\n\n" +
+    `_Call simplegraph_get_node <ID> for full details or simplegraph_check_files with your specific target files._`
   );
 }
 
@@ -1021,8 +1410,31 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
               "Blast radius: callers and dependents of the symbols you are editing, as reported by " +
               "your structural code graph.",
           },
+          detail: {
+            type: "string",
+            enum: ["brief", "full"],
+            description: "Detail level: 'brief' (default) returns a compact 1-2 line triage string per node; 'full' returns complete records.",
+          },
         },
         required: [],
+      },
+    },
+    {
+      name: "simplegraph_preflight",
+      description:
+        "PRE-FLIGHT INTENT CHECK. Call this BEFORE choosing or editing files. " +
+        "Checks your high-level intent against anti-patterns, invariants, architectural decisions, " +
+        "and known regressions. Prevents conceptual mistakes (e.g., widening an exception handler, " +
+        "bypassing a cache, or violating an architectural boundary) before writing code.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          intent: {
+            type: "string",
+            description: "What you plan to do conceptually (e.g. 'widen exception handler to catch all errors', 'add cache bypass for admin users')",
+          },
+        },
+        required: ["intent"],
       },
     },
     {
@@ -1059,7 +1471,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       inputSchema: {
         type: "object",
         properties: {
-          type:            { type: "string", enum: ["Component", "Invariant", "Regression", "Decision", "Watchlist"] },
+          type:            { type: "string", enum: ["Component", "Invariant", "Regression", "Decision", "Watchlist", "AntiPattern"] },
           id:              { type: "string", description: "UPPER_SNAKE_CASE unique ID (e.g. REG_MY_BUG, INV_MY_RULE)" },
           label:           { type: "string", description: "Short human-readable label" },
           summary:         { type: "string", description: "2-4 sentences: what happened, why it matters, how it was fixed" },
@@ -1069,12 +1481,35 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           symbols:         { type: "array", items: { type: "string" }, description: "Affected symbols — functions, classes, or methods (e.g. ['AuthService.refreshToken']). Anchoring to a symbol as well as a file keeps the node matchable after a rename, and lets it fire when a caller is edited." },
           paths:           { type: "array", items: { type: "string" }, description: "Directory prefixes this node owns (e.g. ['src/auth']). Mainly for Component nodes: any file beneath an owned path matches. Keep these coarse — a directory, not a file." },
           edges:           { type: "array", items: { type: "string" }, description: "Edge strings: 'VIOLATED_BY → INV_X: explanation'" },
+          evidence:        { type: "string", description: "Structured verification command and expected output (e.g. 'curl /health → 200')" },
+          lastVerified:    { type: "string", description: "Date this claim was verified against code or production (YYYY-MM-DD)" },
           regressedNTimes: { type: "number", description: "For Regression nodes: how many times this has occurred" },
           root_cause:      { type: "string", description: "Required when regressedNTimes ≥ 2. Must answer: (1) authoritative source of truth, (2) specific invariant violated, (3) why prior fixes were symptomatic." },
           author:          { type: "string", description: "Who is creating this node (agent/tool name or human). For multi-agent attribution. Defaults to the SIMPLEGRAPH_AUTHOR env var if unset." },
           session:         { type: "string", description: "Session identifier this node was created in. Helps arbitrate concurrent writes from different agents. Defaults to the SIMPLEGRAPH_SESSION env var if unset." },
         },
         required: ["type", "id", "label", "summary", "priority"],
+      },
+    },
+    {
+      name: "simplegraph_verify_node",
+      description:
+        "Stamp a node as verified against code or production. " +
+        "Updates LastVerified date and auto-captures the current git commit SHA under graph lock. " +
+        "Call this whenever you test or inspect the code and confirm an existing node's claim still holds.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          id: {
+            type: "string",
+            description: "Node ID to verify (e.g. 'INV_AUTH_TOKEN' or 'REG_TOKEN_LEAK')",
+          },
+          date: {
+            type: "string",
+            description: "Optional verification date (YYYY-MM-DD). Defaults to today.",
+          },
+        },
+        required: ["id"],
       },
     },
     {
@@ -1096,10 +1531,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           id:         { type: "string", description: "Node ID to update" },
           field: {
             type: "string",
-            enum: ["Label", "Summary", "Priority", "Tags", "LastUpdated", "REGRESSED_N_TIMES", "Files", "Symbols", "Paths"],
+            enum: ["Label", "Summary", "Priority", "Tags", "LastUpdated", "REGRESSED_N_TIMES", "Files", "Symbols", "Paths", "Evidence", "LastVerified", "Commit"],
             description:
-              "Field to update. Symbols and Paths are inserted if the node does not have them yet, " +
-              "so nodes written before those fields existed can be anchored without a rewrite.",
+              "Field to update. Symbols, Paths, Evidence, and LastVerified are inserted if the node does not have them yet, " +
+              "so nodes written before those fields existed can be updated without a rewrite.",
           },
           value: {
             type: "string",
@@ -1297,12 +1732,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return ok(nodes.length ? summarizeNodes(nodes) : `No nodes found for category: ${category}.`);
       }
 
+      case "simplegraph_preflight": {
+        const { intent } = args as { intent: string };
+        return handlePreflight({ intent }, GRAPH_ROOT, SHARED_ROOT);
+      }
+
       case "simplegraph_check_files": {
         const {
           files = [], symbols = [], related_files = [], related_symbols = [],
+          detail = "brief",
         } = args as {
           files?: string[]; symbols?: string[];
           related_files?: string[]; related_symbols?: string[];
+          detail?: "brief" | "full";
         };
         if (!files.length && !symbols.length && !related_files.length && !related_symbols.length)
           return ok("No files provided.");
@@ -1320,45 +1762,63 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const transitive = hits.filter(h => !h.direct);
         const high = hits.filter(h => h.node.priority === "HIGH");
 
-        const overflow = (shown: number, total: number, what: string) =>
-          total > shown
-            ? `\n\n_${total - shown} further ${what} not shown (ranked lower). ` +
-              `Narrow the radius, or list them with simplegraph_search._`
-            : "";
-
         const sections: string[] = [];
 
-        if (direct.length) {
-          // Nothing on the direct path is ever dropped: past the detail limit the
-          // remainder is digested rather than hidden. A node you are editing that
-          // silently fails to appear is the failure this tool exists to prevent.
-          const full = direct.slice(0, DIRECT_DETAIL_LIMIT);
-          const rest = direct.slice(DIRECT_DETAIL_LIMIT);
-          sections.push(
-            `## Directly affected (${direct.length})\n\n` +
-            full.map(h => `**Matched on:** ${h.reasons.join("; ")}\n${summarizeNodes([h.node])}`)
-                .join("\n\n---\n\n") +
-            (rest.length
-              ? `\n\n### Also directly affected (${rest.length}, summarized)\n\n${digestNodes(rest)}`
-              : "")
-          );
+        if (detail === "full") {
+          const overflow = (shown: number, total: number, what: string) =>
+            total > shown
+              ? `\n\n_${total - shown} further ${what} not shown (ranked lower). ` +
+                `Narrow the radius, or list them with simplegraph_search._`
+              : "";
+
+          if (direct.length) {
+            const full = direct.slice(0, DIRECT_DETAIL_LIMIT);
+            const rest = direct.slice(DIRECT_DETAIL_LIMIT);
+            sections.push(
+              `## Directly affected (${direct.length})\n\n` +
+              full.map(h => `**Matched on:** ${h.reasons.join("; ")}\n${summarizeNodes([h.node])}`)
+                  .join("\n\n---\n\n") +
+              (rest.length
+                ? `\n\n### Also directly affected (${rest.length}, summarized)\n\n${digestNodes(rest)}`
+                : "")
+            );
+          }
+
+          if (transitive.length) {
+            const shown = transitive.slice(0, RADIUS_DIGEST_LIMIT);
+            sections.push(
+              `## In the blast radius (${transitive.length}, not edited directly)\n\n` +
+              `Anchored to code that depends on — or is depended on by — what you are editing. ` +
+              `Summarized; call \`simplegraph_get_node <ID>\` for a full record.\n\n` +
+              digestNodes(shown) +
+              overflow(shown.length, transitive.length, "blast-radius node(s)")
+            );
+          }
+        } else {
+          // "brief" triage mode (default)
+          if (direct.length) {
+            sections.push(
+              `## Directly affected (${direct.length})\n\n` +
+              briefNodes(direct)
+            );
+          }
+
+          if (transitive.length) {
+            sections.push(
+              `## In the blast radius (${transitive.length}, not edited directly)\n\n` +
+              briefNodes(transitive)
+            );
+          }
         }
 
-        if (transitive.length) {
-          const shown = transitive.slice(0, RADIUS_DIGEST_LIMIT);
-          sections.push(
-            `## In the blast radius (${transitive.length}, not edited directly)\n\n` +
-            `Anchored to code that depends on — or is depended on by — what you are editing. ` +
-            `Summarized; call \`simplegraph_get_node <ID>\` for a full record.\n\n` +
-            digestNodes(shown) +
-            overflow(shown.length, transitive.length, "blast-radius node(s)")
-          );
-        }
+        const footer = detail === "full"
+          ? ""
+          : `\n\n_Pass detail: "full" to see complete records, or call simplegraph_get_node <ID>._`;
 
         return ok(
           `⚠ Found ${hits.length} node(s)` +
           (high.length ? ` (${high.length} HIGH priority)` : "") +
-          `:\n\n${sections.join("\n\n")}`
+          `:\n\n${sections.join("\n\n")}${footer}`
         );
       }
 
@@ -1384,18 +1844,25 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "simplegraph_add_node": {
         const {
           type, id, label, summary, priority,
-          tags, files, symbols, paths, edges, regressedNTimes, root_cause, author, session,
+          tags, files, symbols, paths, edges, evidence, lastVerified, commit,
+          regressedNTimes, root_cause, author, session,
         } = args as {
           type: string; id: string; label: string; summary: string;
           priority: string; tags?: string[]; files?: string[];
           symbols?: string[]; paths?: string[]; edges?: string[];
+          evidence?: string; lastVerified?: string; commit?: string;
           regressedNTimes?: number; root_cause?: string; author?: string; session?: string;
         };
         return handleAddNode(
-          { type, id, label, summary, priority, tags, files, symbols, paths, edges, regressedNTimes, root_cause, author, session },
+          { type, id, label, summary, priority, tags, files, symbols, paths, edges, evidence, lastVerified, commit, regressedNTimes, root_cause, author, session },
           GRAPH_ROOT,
           SHARED_ROOT
         );
+      }
+
+      case "simplegraph_verify_node": {
+        const { id, date } = args as { id: string; date?: string };
+        return handleVerifyNode({ id, date }, GRAPH_ROOT, SHARED_ROOT);
       }
 
       case "simplegraph_update_node": {

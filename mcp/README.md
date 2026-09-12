@@ -22,12 +22,14 @@ Use both: keep the skill/CLAUDE.md as a session-start summary and use MCP for mi
 |---|---|---|
 | `simplegraph_index` | Session start | Returns graph_index.md — routing table and quick index |
 | `simplegraph_nodes` | When routing table points to a category | Returns all nodes for regressions / invariants / decisions / watchlists / anti_patterns / components |
-| `simplegraph_check_files` | **Before editing any file** | Returns regressions, watchlists, invariants anchored to the code you're touching — and, if you supply a blast radius, to the code around it. See [Working on top of a code graph](#working-on-top-of-a-code-graph) |
+| `simplegraph_check_files` | **Before editing any file** | Returns regressions, watchlists, invariants anchored to the code you're touching — and, if you supply a blast radius, to the code around it. Supports multi-factor ranking and `detail: "brief" \| "full"`. See [Working on top of a code graph](#working-on-top-of-a-code-graph) |
+| `simplegraph_preflight` | Before planning / touching files | Matches conceptual intent or task description against AntiPatterns and Invariants without requiring file paths |
 | `simplegraph_anti_patterns` | Before generating code | Returns the anti-patterns list |
 | `simplegraph_search` | When looking for context by keyword | Searches IDs, labels, summaries, tags, edges, and file/symbol/path anchors |
 | `simplegraph_get_node` | When you know the exact ID | Returns one node's full raw record — use to expand a digest from `check_files` |
-| `simplegraph_add_node` | After fixing a bug / making a decision | Appends a new node (optionally stamped with `author`/`session`) and regenerates the Quick Index |
+| `simplegraph_add_node` | After fixing a bug / making a decision | Appends a new node (auto-stamped with commit SHA, optional `author`/`session`/`evidence`) and regenerates the Quick Index |
 | `simplegraph_update_node` | When a bug recurs or updating fields | Increments `REGRESSED_N_TIMES`, auto-upgrades priority to HIGH at ≥2, or updates/appends fields |
+| `simplegraph_verify_node` | When re-verifying a node's claim | Updates `LastVerified` date, stamps current commit SHA, and refreshes the index |
 | `simplegraph_correct_node` | When an existing node was inaccurate | Appends `⚠ CORRECTED <date>: <correction>` to Summary and updates LastUpdated |
 | `simplegraph_reindex` | After a git merge or manual edit | Rebuilds the Quick Index from the node files, deterministically |
 | `simplegraph_archive_regression` | When a bug is permanently fixed | Moves a Regression to the archive and refreshes the index |
@@ -35,7 +37,7 @@ Use both: keep the skill/CLAUDE.md as a session-start summary and use MCP for mi
 | `simplegraph_seed_candidates` | Bootstrapping, or when Decisions look thin | Returns commits whose message may record a *why*, for you to judge and write as Decision nodes |
 | `simplegraph_update_index` | Rarely — `add_node` already does it | Regenerates the Quick Index; prefer `simplegraph_reindex` |
 
-Fourteen tools, but only three matter day to day: **`check_files` before an
+Sixteen tools, but only three matter day to day: **`check_files` before an
 edit**, **`anti_patterns` before generating code**, and **`add_node` after a
 fix**. The rest are there when you need them.
 
@@ -85,6 +87,16 @@ npm link          # exposes `sg` globally, or invoke via `node dist/seed/cli.js 
 - **`sg correct <id> <correction> [--date <date>]`**: Record an erratum on an existing node. Appends `⚠ CORRECTED <date>: <correction>` to Summary and updates `LastUpdated`.
   ```bash
   sg correct REG_HOT_CACHE "Root cause was Redis TTL, not Postgres index"
+  ```
+
+- **`sg verify <id> [--date <date>] [--evidence <evidence>]`**: Re-verify an existing node's claim against code or production. Updates `LastVerified` to current date, stamps the current git commit SHA, and optionally updates `Evidence`.
+  ```bash
+  sg verify REG_HOT_CACHE --evidence "curl -s localhost:8080/health -> 200"
+  ```
+
+- **`sg preflight <intent>`**: Preflight check for proposed tasks or intents. Matches conceptual keywords against Anti-Patterns and Invariants before touching code or files.
+  ```bash
+  sg preflight "migrating auth tokens"
   ```
 
 - **`sg hook require-doc [--graph <dir>] [--diff-cmd <cmd>]`**: Pre-commit / Stop hook. Inspects `git diff` against active HIGH-priority Regressions, Invariants, and Watchlists. Reminds the agent to document fixes before completing tasks. Features single-nudge idempotency (`.sg.nudge`) to prevent blocking workflows. Replaces `scripts/require_documentation.sh`.

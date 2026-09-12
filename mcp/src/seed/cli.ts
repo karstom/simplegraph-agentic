@@ -20,7 +20,7 @@ import { regenerateIndex } from "../reindex.js";
 import { runCheck } from "../check.js";
 import { runStaleCheck } from "../stale.js";
 import { runRequireDocHook } from "../hook.js";
-import { handleCorrectNode } from "../index.js";
+import { handleCorrectNode, handleVerifyNode, handlePreflight } from "../index.js";
 import {
   DEFAULT_MAX_COMMITS, DEFAULT_MAX_PER_TYPE, DEFAULT_MIN_CONFIDENCE,
   NODE_TYPES, SEED_VERSION,
@@ -350,6 +350,142 @@ export async function runCorrectCli(argv: string[]): Promise<number> {
   return 0;
 }
 
+const VERIFY_USAGE = `sg verify <id> [options] — stamp a node as verified against code or production
+
+Updates LastVerified to today (or the passed date) and auto-captures HEAD commit SHA.
+
+Usage:
+  sg verify <id> [--date <YYYY-MM-DD>] [--graph <path>]
+
+Options:
+  --date <YYYY-MM-DD>  date of verification (default: today)
+  --graph <path>       path to core/ directory
+  -h, --help           show this help
+`;
+
+export async function runVerifyCli(argv: string[]): Promise<number> {
+  const args = [...argv];
+  let date: string | undefined;
+  let graphRoot = "";
+  let repoPath = process.cwd();
+
+  const positionals: string[] = [];
+  while (args.length) {
+    const a = args.shift()!;
+    if (a === "-h" || a === "--help") { process.stdout.write(VERIFY_USAGE); return 0; }
+    if (a === "--graph") {
+      const v = args.shift();
+      if (v === undefined) throw new Error("--graph requires a value");
+      graphRoot = path.resolve(v);
+    } else if (a === "--date") {
+      const v = args.shift();
+      if (v === undefined) throw new Error("--date requires a value");
+      date = v;
+    } else if (a.startsWith("-")) {
+      throw new Error(`Unknown option: ${a}\n\n${VERIFY_USAGE}`);
+    } else {
+      positionals.push(a);
+    }
+  }
+
+  if (positionals.length < 1) {
+    process.stderr.write(`Error: sg verify requires a node <id>.\n\n${VERIFY_USAGE}`);
+    return 1;
+  }
+  const id = positionals[0];
+
+  if (!graphRoot) {
+    if (process.env.SIMPLEGRAPH_ROOT) {
+      graphRoot = path.resolve(process.env.SIMPLEGRAPH_ROOT);
+    } else {
+      try {
+        const toplevel = fs.existsSync(path.join(repoPath, ".git")) ? repoPath : "";
+        if (toplevel) graphRoot = path.join(toplevel, "core");
+      } catch {}
+      if (!graphRoot) graphRoot = path.join(repoPath, "core");
+    }
+  }
+
+  if (!fs.existsSync(graphRoot)) {
+    process.stderr.write(`core directory not found at ${graphRoot}.\n`);
+    return 1;
+  }
+
+  const result = handleVerifyNode({ id, date }, graphRoot);
+  const text = (result.content?.[0] as { text?: string })?.text ?? "";
+  if (result.isError) {
+    process.stderr.write(`Error: ${text}\n`);
+    return 1;
+  }
+  process.stdout.write(`${text}\n`);
+  return 0;
+}
+
+const PREFLIGHT_USAGE = `sg preflight "<intent>" [options] — check architectural rules before editing
+
+Matches intent against anti-patterns, invariants, decisions, and known regressions.
+
+Usage:
+  sg preflight "<intent>" [--graph <path>]
+
+Options:
+  --graph <path>    path to core/ directory
+  -h, --help        show this help
+`;
+
+export async function runPreflightCli(argv: string[]): Promise<number> {
+  const args = [...argv];
+  let graphRoot = "";
+  let repoPath = process.cwd();
+
+  const positionals: string[] = [];
+  while (args.length) {
+    const a = args.shift()!;
+    if (a === "-h" || a === "--help") { process.stdout.write(PREFLIGHT_USAGE); return 0; }
+    if (a === "--graph") {
+      const v = args.shift();
+      if (v === undefined) throw new Error("--graph requires a value");
+      graphRoot = path.resolve(v);
+    } else if (a.startsWith("-")) {
+      throw new Error(`Unknown option: ${a}\n\n${PREFLIGHT_USAGE}`);
+    } else {
+      positionals.push(a);
+    }
+  }
+
+  if (positionals.length < 1) {
+    process.stderr.write(`Error: sg preflight requires an intent string.\n\n${PREFLIGHT_USAGE}`);
+    return 1;
+  }
+  const intent = positionals.join(" ");
+
+  if (!graphRoot) {
+    if (process.env.SIMPLEGRAPH_ROOT) {
+      graphRoot = path.resolve(process.env.SIMPLEGRAPH_ROOT);
+    } else {
+      try {
+        const toplevel = fs.existsSync(path.join(repoPath, ".git")) ? repoPath : "";
+        if (toplevel) graphRoot = path.join(toplevel, "core");
+      } catch {}
+      if (!graphRoot) graphRoot = path.join(repoPath, "core");
+    }
+  }
+
+  if (!fs.existsSync(graphRoot)) {
+    process.stderr.write(`core directory not found at ${graphRoot}.\n`);
+    return 1;
+  }
+
+  const result = handlePreflight({ intent }, graphRoot);
+  const text = (result.content?.[0] as { text?: string })?.text ?? "";
+  if (result.isError) {
+    process.stderr.write(`Error: ${text}\n`);
+    return 1;
+  }
+  process.stdout.write(`${text}\n`);
+  return 0;
+}
+
 const HOOK_USAGE = `sg hook <name> [options] — run agent lifecycle hooks
 
 Hooks:
@@ -558,12 +694,14 @@ if (/\b(sg|cli)(\.js|\.ts)?$/.test(path.basename(invoked))) {
   if (!command || command === "-h" || command === "--help") {
     process.stdout.write(
       `sg — simplegraph CLI\n\nCommands:\n` +
-      `  seed     ${USAGE.split("\n")[0]}\n` +
-      `  reindex  ${REINDEX_USAGE.split("\n")[0]}\n` +
-      `  check    ${CHECK_USAGE.split("\n")[0]}\n` +
-      `  stale    ${STALE_USAGE.split("\n")[0]}\n` +
-      `  correct  ${CORRECT_USAGE.split("\n")[0]}\n` +
-      `  hook     ${HOOK_USAGE.split("\n")[0]}\n\n${USAGE}`
+      `  seed       ${USAGE.split("\n")[0]}\n` +
+      `  reindex    ${REINDEX_USAGE.split("\n")[0]}\n` +
+      `  check      ${CHECK_USAGE.split("\n")[0]}\n` +
+      `  stale      ${STALE_USAGE.split("\n")[0]}\n` +
+      `  correct    ${CORRECT_USAGE.split("\n")[0]}\n` +
+      `  verify     ${VERIFY_USAGE.split("\n")[0]}\n` +
+      `  preflight  ${PREFLIGHT_USAGE.split("\n")[0]}\n` +
+      `  hook       ${HOOK_USAGE.split("\n")[0]}\n\n${USAGE}`
     );
     process.exit(command ? 0 : 1);
   } else if (command === "seed") {
@@ -576,6 +714,10 @@ if (/\b(sg|cli)(\.js|\.ts)?$/.test(path.basename(invoked))) {
     runStaleCli(rest).then(code => process.exit(code)).catch(runFail);
   } else if (command === "correct") {
     runCorrectCli(rest).then(code => process.exit(code)).catch(runFail);
+  } else if (command === "verify") {
+    runVerifyCli(rest).then(code => process.exit(code)).catch(runFail);
+  } else if (command === "preflight") {
+    runPreflightCli(rest).then(code => process.exit(code)).catch(runFail);
   } else if (command === "hook") {
     runHookCli(rest).then(code => process.exit(code)).catch(runFail);
   } else {

@@ -16,7 +16,7 @@ import * as path from "path";
 import { parseNodes, type GraphNode } from "./parser.js";
 import { atomicWriteFileSync } from "./fsutil.js";
 
-const MULTI_NODE_FILES = ["regressions.md", "invariants.md", "decisions.md", "watchlists.md"];
+const MULTI_NODE_FILES = ["regressions.md", "invariants.md", "decisions.md", "watchlists.md", "anti_patterns.md"];
 
 // Quick Index row label → node type it enumerates.
 const ROW_FOR_TYPE: Record<string, string> = {
@@ -25,6 +25,7 @@ const ROW_FOR_TYPE: Record<string, string> = {
   regression: "Active Regressions",
   decision: "Decisions",
   watchlist: "Watchlists & Open Issues",
+  antipattern: "Anti-Patterns",
 };
 
 export interface ReindexResult {
@@ -90,6 +91,10 @@ export function regenerateIndexContent(content: string, nodes: GraphNode[]): { c
     result.rows.push({ label, count: group.length });
     result.total += group.length;
 
+    if (type === "antipattern" && group.length === 0) {
+      continue;
+    }
+
     // Match a table row `| **<label>** | <nodes> | <file> |` and rewrite only
     // the middle (nodes) cell. The label may contain regex metachars (&) — none
     // today, but escape defensively.
@@ -101,6 +106,15 @@ export function regenerateIndexContent(content: string, nodes: GraphNode[]): { c
     }
     const cell = renderCell(group);
     out = out.replace(rowPattern, (_s, prefix, _mid, suffix) => `${prefix} ${cell} ${suffix}`);
+  }
+
+  // Update header > **LastUpdated:** <date> if present
+  const dates = nodes
+    .map(n => n.lastVerified || n.lastUpdated)
+    .filter((d): d is string => !!d && /^\d{4}-\d{2}-\d{2}$/.test(d));
+  if (dates.length > 0) {
+    const latestDate = dates.sort().reverse()[0];
+    out = out.replace(/(>\s*\*\*LastUpdated:\*\*\s*)[^\r\n]+/i, `$1${latestDate}`);
   }
 
   return { content: out, result };

@@ -5,7 +5,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseNodes } from "./parser.js";
+import { parseNodes, formatNode } from "./parser.js";
 
 const REAL = [
   "## NODE: REG_REAL",
@@ -47,4 +47,51 @@ test("rawContent is unchanged for real nodes, so seeded hashes still match", () 
 test("multiple nodes outside any masked region all parse", () => {
   const content = `${REAL}\n\n---\n\n## NODE: INV_SECOND\n**Label:** Second\n`;
   assert.deepEqual(parseNodes(content, "x.md").map(n => n.id), ["REG_REAL", "INV_SECOND"]);
+});
+
+test("Evidence, LastVerified, and Commit survive a formatNode -> parseNodes round trip", () => {
+  const node = {
+    id: "ANTI_DIRECT_MUTATION",
+    type: "AntiPattern",
+    priority: "HIGH",
+    label: "Do not mutate global state directly",
+    summary: "Mutating global state causes race conditions across agents.",
+    tags: ["concurrency", "state"],
+    files: ["src/state.ts"],
+    symbols: ["setState"],
+    paths: ["src"],
+    edges: [],
+    evidence: "curl -s http://localhost:8080/health | jq .status → 'healthy'",
+    lastVerified: "2026-03-15",
+    commit: "abc1234",
+    lastUpdated: "2026-03-10",
+  };
+  const formatted = formatNode(node);
+  assert.ok(formatted.includes("**Evidence:** curl -s http://localhost:8080/health | jq .status → 'healthy'"));
+  assert.ok(formatted.includes("**LastVerified:** 2026-03-15"));
+  assert.ok(formatted.includes("**Commit:** abc1234"));
+
+  const parsed = parseNodes(formatted, "anti_patterns.md");
+  assert.equal(parsed.length, 1);
+  assert.equal(parsed[0].type, "AntiPattern");
+  assert.equal(parsed[0].evidence, "curl -s http://localhost:8080/health | jq .status → 'healthy'");
+  assert.equal(parsed[0].lastVerified, "2026-03-15");
+  assert.equal(parsed[0].commit, "abc1234");
+});
+
+test("nodes without Evidence, LastVerified, or Commit omit those lines", () => {
+  const formatted = formatNode({
+    id: "INV_PLAIN",
+    type: "Invariant",
+    priority: "LOW",
+    label: "Plain invariant",
+    summary: "No extra fields.",
+    tags: [],
+    files: [],
+    edges: [],
+    lastUpdated: "2026-01-01",
+  });
+  assert.ok(!formatted.includes("**Evidence:**"));
+  assert.ok(!formatted.includes("**LastVerified:**"));
+  assert.ok(!formatted.includes("**Commit:**"));
 });
