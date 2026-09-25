@@ -192,7 +192,7 @@ DUPES=$(uniq -d < "${NODE_IDS}")
 if [ -n "$DUPES" ]; then
   echo "✗ Duplicate node IDs found (same ID defined more than once):"
   echo "$DUPES"
-  echo "  Rename one, or merge the two definitions into a single NODE block, then re-run 'sg reindex'."
+  echo "  Rename one, or merge the two definitions into a single NODE block, then re-run 'simplegraph reindex'."
   STATUS=1
 fi
 

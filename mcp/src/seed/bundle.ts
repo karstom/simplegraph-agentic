@@ -1,4 +1,4 @@
-// sg seed — draft bundle assembly: run extractors, apply quality controls
+// simplegraph seed — draft bundle assembly: run extractors, apply quality controls
 // (confidence floor, per-type caps, cross-extractor dedupe), infer edges,
 // and produce the reviewable DraftBundle. Deterministic: same repo state +
 // same options → byte-identical bundle.

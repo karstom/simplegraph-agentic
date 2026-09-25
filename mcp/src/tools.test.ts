@@ -529,14 +529,14 @@ test("a squash-merge history points the agent at the pull requests", () => {
 
 // Mining is linear in the window: ~1ms per commit typically, ~5ms on a repo the
 // size of DuckDB, where 10,000 commits takes 50s. An interactive tool call has
-// to bound that; `sg seed` stays uncapped for batch use.
+// to bound that; `simplegraph seed` stays uncapped for batch use.
 test("an oversized history window is capped and the caller is told", () => {
   const { repo, graphRoot } = repoWithGraph();
   commitWith(repo, "feat: add persistence", WHY, "src/db.ts");
 
   const text = handleSeedCandidates({ max_commits: 50000 }, graphRoot).content[0].text;
   assert.match(text, /Window capped at 2000 commits \(you asked for 50000\)/);
-  assert.match(text, /sg seed/, "the uncapped path must be named");
+  assert.match(text, /simplegraph seed/, "the uncapped path must be named");
 });
 
 test("a window within the cap draws no note", () => {
