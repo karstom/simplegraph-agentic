@@ -74,7 +74,7 @@ test("Symbols and Paths survive a serialize → parse round-trip", () => {
 });
 
 test("a node with no anchors renders exactly as it did before the fields existed", () => {
-  // Guards `sg seed` idempotency: contentHash() runs over the rendered block, so
+  // Guards `simplegraph seed` idempotency: contentHash() runs over the rendered block, so
   // emitting an empty **Symbols:** line would shift every recorded seed hash and
   // make untouched nodes read as hand-edited.
   const rendered = formatNode({

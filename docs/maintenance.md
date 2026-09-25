@@ -12,10 +12,10 @@ The graph only stays useful if it's updated when code changes.
 
 | Task | Mechanism |
 |---|---|
-| **Edge consistency & duplicate IDs** (`consistency_check.sh` / `sg check`) | CI required status check — enforced on every PR |
+| **Edge consistency & duplicate IDs** (`consistency_check.sh` / `simplegraph check`) | CI required status check — enforced on every PR |
 | **Structural map** (`auto_map.sh`) | Git pre-commit hook — automatic, local |
-| **Capture** — recording a node when risky code changes (`require_documentation.sh` / `sg hook require-doc`) | Claude Code & Antigravity `Stop` hook — reminds the agent before it finishes |
-| **Staleness & missing anchors** (`stale_check.sh` / `sg stale`) | Periodic maintenance — flags >90d untouched nodes & deleted code paths |
+| **Capture** — recording a node when risky code changes (`require_documentation.sh` / `simplegraph hook require-doc`) | Claude Code & Antigravity `Stop` hook — reminds the agent before it finishes |
+| **Staleness & missing anchors** (`stale_check.sh` / `simplegraph stale`) | Periodic maintenance — flags >90d untouched nodes & deleted code paths |
 | **Node updates** (regressions, decisions, etc.) | Grow through use; the Stop hook nudges, CI validates |
 
 **CI check** — add as a required branch protection rule so broken edges can never merge:
@@ -33,7 +33,7 @@ jobs:
         # - run: npx simplegraph check
 ```
 
-Node IDs are matched as `[A-Z][A-Z0-9_]*`, so the hashed IDs `sg seed` mints
+Node IDs are matched as `[A-Z][A-Z0-9_]*`, so the hashed IDs `simplegraph seed` mints
 (`REG_TOKEN_LEAK_1F3A`) are compared in full rather than truncated at the first
 digit. The bash check uses only POSIX `grep -E` / `sed` / `awk` — no `grep -P`, which
 BSD/macOS grep does not support — and automatically delegates to Node (`mcp/dist/seed/cli.js check`)
@@ -51,7 +51,7 @@ Run `bash scripts/test_consistency_check.sh` to verify the gate itself.
 CI can enforce that the graph is internally *valid* (no broken edges, no
 duplicate IDs), but it can't enforce that new knowledge was *written down* —
 nothing in a diff says "this fix deserved a Regression node." `require_documentation.sh`
-(and `sg hook require-doc`) closes that gap for **Claude Code** and **Antigravity**. Wired as a `Stop` hook, it runs when the agent
+(and `simplegraph hook require-doc`) closes that gap for **Claude Code** and **Antigravity**. Wired as a `Stop` hook, it runs when the agent
 tries to finish and checks: did this task change a file a **HIGH-priority** node
 points at (a known regression or danger zone) without touching the graph? If so,
 it blocks once with the specific files and nodes and asks the agent to record
@@ -72,7 +72,7 @@ Wiring the hook:
 - **Antigravity:** Automatically registered in the workspace plugin at `.agents/plugins/simplegraph/hooks.json`.
 
 Verify the hook with `bash scripts/test_require_documentation.sh` or `npm test` in `mcp/`. This is the "force capture" layer;
-`consistency_check.sh` / `sg check` in CI remains the "force validity" layer.
+`consistency_check.sh` / `simplegraph check` in CI remains the "force validity" layer.
 
 ---
 

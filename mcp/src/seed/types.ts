@@ -1,4 +1,4 @@
-// sg seed — shared types for the repository-mining seed pipeline.
+// simplegraph seed — shared types for the repository-mining seed pipeline.
 //
 // The pipeline: extractors mine a repo into DraftNodes → edge inference links
 // them → the bundle applies quality controls (confidence floor, per-type caps,

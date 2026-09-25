@@ -1,4 +1,4 @@
-// sg seed — merge a DraftBundle into the core/ graph files.
+// simplegraph seed — merge a DraftBundle into the core/ graph files.
 //
 // Contract (matches the seed idempotency rules):
 //   • A node whose ID is new is appended to its target file.
@@ -131,7 +131,7 @@ function appendNodeBlock(filePath: string, block: string): void {
 export function mergeBundle(bundle: DraftBundle, graphRoot: string): MergeResult {
   // Hold the graph lock across the entire merge. Seeding is a long
   // read-modify-write over the same files the MCP server mutates; without the
-  // lock an `sg seed` run racing an agent's add_node/update_node can lose one
+  // lock an `simplegraph seed` run racing an agent's add_node/update_node can lose one
   // side's changes entirely.
   return withGraphLock(graphRoot, () => mergeBundleLocked(bundle, graphRoot));
 }

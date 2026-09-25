@@ -54,54 +54,54 @@ npm install
 npm run build
 ```
 
-## Bundled CLI: `sg` (Cross-Platform)
+## Bundled CLI: `simplegraph` (Cross-Platform)
 
-This package also ships the `sg` bin (`dist/seed/cli.js`), providing a unified, cross-platform TypeScript CLI for Windows (cmd/PowerShell), macOS, and Linux without bash or unix utility dependencies:
+This package also ships the `simplegraph` bin (`dist/seed/cli.js`), providing a unified, cross-platform TypeScript CLI for Windows (cmd/PowerShell), macOS, and Linux without bash or unix utility dependencies:
 
 ```bash
-npm link          # exposes `sg` globally, or invoke via `node dist/seed/cli.js <cmd>`
+npm link          # exposes `simplegraph` globally, or invoke via `node dist/seed/cli.js <cmd>`
 ```
 
 ### Commands
 
-- **`sg seed <path>`**: Bootstraps a memory graph by mining a repository's git history and working tree — reverts/fix commits → Regressions, ADRs and merge bodies → Decisions, rule comments and test names → Invariants, TODO/churn → Watchlists, directory structure → Components. Deterministic, offline, no API key; every node carries provenance and confidence score (`--dry-run` / `--yes`).
+- **`simplegraph seed <path>`**: Bootstraps a memory graph by mining a repository's git history and working tree — reverts/fix commits → Regressions, ADRs and merge bodies → Decisions, rule comments and test names → Invariants, TODO/churn → Watchlists, directory structure → Components. Deterministic, offline, no API key; every node carries provenance and confidence score (`--dry-run` / `--yes`).
   ```bash
-  sg seed /path/to/your/project --dry-run
+  simplegraph seed /path/to/your/project --dry-run
   ```
 
-- **`sg reindex [path]`**: Regenerates `graph_index.md`'s Quick Index from current node files. Deterministic, sorted, and order-independent — ideal for resolving `graph_index.md` merge conflicts after parallel branch merges.
+- **`simplegraph reindex [path]`**: Regenerates `graph_index.md`'s Quick Index from current node files. Deterministic, sorted, and order-independent — ideal for resolving `graph_index.md` merge conflicts after parallel branch merges.
   ```bash
-  sg reindex /path/to/your/project
+  simplegraph reindex /path/to/your/project
   ```
 
-- **`sg check [path] [--shared <dir>]`**: Cross-platform consistency checker. Validates that node IDs are unique across all node files, all edge references (`relates_to`, `caused_by`, etc.) point to existing nodes, and shared graph nodes carry attribution (`Author`/`Session`). Replaces `scripts/consistency_check.sh`.
+- **`simplegraph check [path] [--shared <dir>]`**: Cross-platform consistency checker. Validates that node IDs are unique across all node files, all edge references (`relates_to`, `caused_by`, etc.) point to existing nodes, and shared graph nodes carry attribution (`Author`/`Session`). Replaces `scripts/consistency_check.sh`.
   ```bash
-  sg check /path/to/your/project
+  simplegraph check /path/to/your/project
   ```
 
-- **`sg stale [path]`**: Stale reference detector. Flags nodes unmodified for > 90 days (`LastUpdated`), files anchored that no longer exist on disk, directory paths that don't exist, and symbol anchors no longer found in anchored files. Replaces `scripts/stale_check.sh`.
+- **`simplegraph stale [path]`**: Stale reference detector. Flags nodes unmodified for > 90 days (`LastUpdated`), files anchored that no longer exist on disk, directory paths that don't exist, and symbol anchors no longer found in anchored files. Replaces `scripts/stale_check.sh`.
   ```bash
-  sg stale /path/to/your/project
+  simplegraph stale /path/to/your/project
   ```
 
-- **`sg correct <id> <correction> [--date <date>]`**: Record an erratum on an existing node. Appends `⚠ CORRECTED <date>: <correction>` to Summary and updates `LastUpdated`.
+- **`simplegraph correct <id> <correction> [--date <date>]`**: Record an erratum on an existing node. Appends `⚠ CORRECTED <date>: <correction>` to Summary and updates `LastUpdated`.
   ```bash
-  sg correct REG_HOT_CACHE "Root cause was Redis TTL, not Postgres index"
+  simplegraph correct REG_HOT_CACHE "Root cause was Redis TTL, not Postgres index"
   ```
 
-- **`sg verify <id> [--date <date>] [--evidence <evidence>]`**: Re-verify an existing node's claim against code or production. Updates `LastVerified` to current date, stamps the current git commit SHA, and optionally updates `Evidence`.
+- **`simplegraph verify <id> [--date <date>] [--evidence <evidence>]`**: Re-verify an existing node's claim against code or production. Updates `LastVerified` to current date, stamps the current git commit SHA, and optionally updates `Evidence`.
   ```bash
-  sg verify REG_HOT_CACHE --evidence "curl -s localhost:8080/health -> 200"
+  simplegraph verify REG_HOT_CACHE --evidence "curl -s localhost:8080/health -> 200"
   ```
 
-- **`sg preflight <intent>`**: Preflight check for proposed tasks or intents. Matches conceptual keywords against Anti-Patterns and Invariants before touching code or files.
+- **`simplegraph preflight <intent>`**: Preflight check for proposed tasks or intents. Matches conceptual keywords against Anti-Patterns and Invariants before touching code or files.
   ```bash
-  sg preflight "migrating auth tokens"
+  simplegraph preflight "migrating auth tokens"
   ```
 
-- **`sg hook require-doc [--graph <dir>] [--diff-cmd <cmd>]`**: Pre-commit / Stop hook. Inspects `git diff` against active HIGH-priority Regressions, Invariants, and Watchlists. Reminds the agent to document fixes before completing tasks. Features single-nudge idempotency (`.sg.nudge`) to prevent blocking workflows. Replaces `scripts/require_documentation.sh`.
+- **`simplegraph hook require-doc [--graph <dir>] [--diff-cmd <cmd>]`**: Pre-commit / Stop hook. Inspects `git diff` against active HIGH-priority Regressions, Invariants, and Watchlists. Reminds the agent to document fixes before completing tasks. Features single-nudge idempotency (`.sg.nudge`) to prevent blocking workflows. Replaces `scripts/require_documentation.sh`.
   ```bash
-  sg hook require-doc
+  simplegraph hook require-doc
   ```
 
 ## Configuration
@@ -131,7 +131,7 @@ For global multi-project configuration, add to `~/.gemini/config/mcp_config.json
 ```json
 {
   "mcpServers": {
-    "sg-my-project": {
+    "simplegraph-my-project": {
       "command": "node",
       "args": ["/absolute/path/to/simplegraph-agentic/mcp/dist/index.js"],
       "env": {
@@ -297,7 +297,7 @@ model decides. Two things fix it:
   triggers a call, and confirms end to end that the wiring works.
 
 **The graph is empty.** A fresh install has no nodes, so every lookup correctly
-returns nothing. Seed it — `sg seed --dry-run` mines your git history offline.
+returns nothing. Seed it — `simplegraph seed --dry-run` mines your git history offline.
 See [seeding](../docs/seeding.md).
 
 **`check_files` returns nothing for a file you know is in the graph.** The node
@@ -339,12 +339,12 @@ The agent namespaces tools by server name and naturally calls the right one:
 ```json
 {
   "mcpServers": {
-    "sg-zerofeed": {
+    "simplegraph-zerofeed": {
       "command": "node",
       "args": ["/path/to/simplegraph-agentic/mcp/dist/index.js"],
       "env": { "SIMPLEGRAPH_ROOT": "/path/to/zerofeed/core" }
     },
-    "sg-other-project": {
+    "simplegraph-other-project": {
       "command": "node",
       "args": ["/path/to/simplegraph-agentic/mcp/dist/index.js"],
       "env": { "SIMPLEGRAPH_ROOT": "/path/to/other-project/core" }
@@ -476,7 +476,7 @@ things keep that friction low so graph updates don't get deferred:
   no config needed. Two branches that each appended a node then merge cleanly
   instead of conflicting on every add.
 - **Derived Quick Index.** `graph_index.md` is *not* union-merged (it's a table);
-  it's regenerated from the node files. After a merge, run `sg reindex` (or the
+  it's regenerated from the node files. After a merge, run `simplegraph reindex` (or the
   `simplegraph_reindex` tool) — the output is sorted and order-independent, so
   both sides resolve to the same index. `components/*.md` is one node per file,
   so parallel work touches different files.
@@ -485,7 +485,7 @@ things keep that friction low so graph updates don't get deferred:
   land them promptly; `git fetch` before starting parallel work so you begin from
   the current graph. This is convention, not enforcement — the graph is a git
   artifact and follows your git workflow.
-- **After any graph merge:** `sg reindex` then `sg check` (or `core/scripts/consistency_check.sh`)
+- **After any graph merge:** `simplegraph reindex` then `simplegraph check` (or `core/scripts/consistency_check.sh`)
   — the latter catches duplicate IDs a union merge can produce when two branches
   minted the same ID (git raises no conflict for that on its own).
 
@@ -501,13 +501,13 @@ reads it. The controls:
 - **Attribution.** Set `SIMPLEGRAPH_AUTHOR`/`SIMPLEGRAPH_SESSION` (or pass
   `author`/`session` to `add_node`) so each node records which agent and session
   created it — the signal for arbitrating conflicting nodes after a merge.
-- **Duplicate-ID guard.** `sg check` (or `consistency_check.sh`) fails if two nodes share an ID.
+- **Duplicate-ID guard.** `simplegraph check` (or `consistency_check.sh`) fails if two nodes share an ID.
   Run it in CI or a pre-commit hook.
 - **The `shared/` tier is highest-stakes.** A shared node is loaded by *every*
   repo and agent in the org. The server is **read-only** against `SIMPLEGRAPH_SHARED`
   — no agent can write it — so promoting a node to `shared/` is always a
   deliberate human act (copy the node, commit, review). Treat those PRs with more
-  scrutiny than per-repo graph changes. `sg check` (or `consistency_check.sh`) auto-detects a
+  scrutiny than per-repo graph changes. `simplegraph check` (or `consistency_check.sh`) auto-detects a
   sibling `shared/` graph (or take `--shared <dir>`), validates its edges and IDs
   alongside `core/`, and warns when a shared node carries no attribution — an
   org-wide rule with no traceable source.

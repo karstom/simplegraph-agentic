@@ -7,11 +7,11 @@
 # two branches that each appended a node merge cleanly.
 #
 # After any merge that touched these files, run:
-#   sg reindex                          # rebuild the derived Quick Index
+#   simplegraph reindex                          # rebuild the derived Quick Index
 #   core/scripts/consistency_check.sh   # catches any duplicate IDs union produced
 #
 # NOT union-merged, on purpose:
-#   graph_index.md   — a derived table; regenerate it with `sg reindex` instead.
+#   graph_index.md   — a derived table; regenerate it with `simplegraph reindex` instead.
 #   components/*.md   — one node per file, so branches touch different files.
 
 regressions.md                  merge=union

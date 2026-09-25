@@ -1,4 +1,4 @@
-// sg seed — find commits that may record an architectural decision.
+// simplegraph seed — find commits that may record an architectural decision.
 //
 // The history extractor only mints a Decision when a commit subject starts with
 // an explicit verb (refactor/migrate/adopt/deprecate/...) or when an ADR file

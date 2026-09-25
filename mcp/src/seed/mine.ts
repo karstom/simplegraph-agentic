@@ -1,4 +1,4 @@
-// sg seed — repository mining: git history + working-tree file inventory.
+// simplegraph seed — repository mining: git history + working-tree file inventory.
 // Builds the ExtractorContext shared by all extractors. Pure git plumbing,
 // no network, no API keys.
 

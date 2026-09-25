@@ -38,7 +38,7 @@ export interface GraphNode {
   author?: string;
   /** Session identifier the node was created in, for arbitrating concurrent writes. */
   session?: string;
-  /** Present on nodes written by `sg seed`: "<extractor>@<ver> | confidence: N | hash: H". */
+  /** Present on nodes written by `simplegraph seed`: "<extractor>@<ver> | confidence: N | hash: H". */
   seeded?: string;
   /** Present on seeded nodes: commits and file locations the node was mined from. */
   provenance?: string;
@@ -199,7 +199,7 @@ export function formatNode(
   }
   lines.push(`**Files:** ${node.files.length > 0 ? node.files.map(f => `\`${f}\``).join(", ") : "_(none)_"}`);
   // Emitted only when populated: a node with neither field renders exactly as it
-  // did before these fields existed, so `sg seed` content hashes do not shift.
+  // did before these fields existed, so `simplegraph seed` content hashes do not shift.
   if (node.symbols?.length)
     lines.push(`**Symbols:** ${node.symbols.map(s => `\`${s}\``).join(", ")}`);
   if (node.paths?.length)
