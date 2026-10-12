@@ -1,4 +1,4 @@
-// sg seed — working-tree extractors: Invariant, Watchlist, Component nodes.
+// simplegraph seed — working-tree extractors: Invariant, Watchlist, Component nodes.
 // Deterministic Tier 1: comment conventions, test names, directory structure.
 
 import * as path from "path";

@@ -1188,7 +1188,7 @@ export function handleSeedCandidates(
   // Mining cost is linear in the window and dominated by parsing per-commit
   // file lists: ~1ms per commit on a typical repo, but ~5ms on one the size of
   // DuckDB, where 10,000 commits takes 50s and 110MB. This is an interactive
-  // tool call, so the window is capped rather than left to the caller. `sg seed`
+  // tool call, so the window is capped rather than left to the caller. `simplegraph seed`
   // is uncapped — a batch run can afford to wait.
   const MAX_WINDOW = 2000;
   const requested = args.max_commits ?? 500;
@@ -1211,7 +1211,7 @@ export function handleSeedCandidates(
   // what happened to fall inside a fetch window.
   const windowNote = requested > MAX_WINDOW
     ? `\n\n_Window capped at ${MAX_WINDOW} commits (you asked for ${requested}) to keep this ` +
-      `call responsive. Use \`sg seed\` for a full-history pass._`
+      `call responsive. Use \`simplegraph seed\` for a full-history pass._`
     : "";
 
   const { candidates } = selectDecisionCandidates(ctx, Number.MAX_SAFE_INTEGER);

@@ -2,9 +2,21 @@
 
 ## [Unreleased]
 
+### Removed
+
+- **Dropped the `sg` CLI bin (breaking).** `sg` is `/usr/bin/sg` on Debian/Ubuntu
+  (run a command under a different group ID), so a globally linked `sg` shadowed —
+  or was shadowed by — the system command depending on `PATH` order. The CLI is
+  now `simplegraph` only (the `simplegraph` bin already existed as an alias; this
+  removes the colliding `sg` one). All commands, docs, and hook wiring use
+  `simplegraph <subcommand>` (`seed`, `check`, `reindex`, `stale`, `hook`,
+  `verify`, `correct`, `preflight`). Anyone who linked `sg` should re-link and use
+  `simplegraph`. Internal, non-colliding names (`.sg.lock`, `.sg.nudge`, `SG_HOME`,
+  the download tarball) are unchanged.
+
 ### Added
 
-- **`simplegraph_correct_node` MCP tool & `sg correct` CLI command.** Record an erratum
+- **`simplegraph_correct_node` MCP tool & `simplegraph correct` CLI command.** Record an erratum
   or correction on an existing node without rewriting the entire text. Appends
   `⚠ CORRECTED <date>: <correction>` to `Summary` and updates `LastUpdated`.
 - **`mode: "append"` on `simplegraph_update_node`.** Allows agents to append to text fields
@@ -27,10 +39,10 @@
   hook in `hooks.json`, and an MCP config at `mcp_config.json`. `setup.sh --tool antigravity`
   installs the plugin, updates root `AGENTS.md`, cleans up legacy 1.x artifacts, and wires
   the server.
-- **Cross-platform TypeScript CLI (`sg`) & Windows native compliance.** Implemented pure
+- **Cross-platform TypeScript CLI (`simplegraph`) & Windows native compliance.** Implemented pure
   TypeScript replacements for all utility scripts inside `mcp/src/`:
-  `sg check` (`check.ts`) replacing `consistency_check.sh`, `sg stale` (`stale.ts`) replacing
-  `stale_check.sh`, and `sg hook require-doc` (`hook.ts`) replacing `require_documentation.sh`.
+  `simplegraph check` (`check.ts`) replacing `consistency_check.sh`, `simplegraph stale` (`stale.ts`) replacing
+  `stale_check.sh`, and `simplegraph hook require-doc` (`hook.ts`) replacing `require_documentation.sh`.
   Windows developers can run the full suite natively via PowerShell/CMD without requiring WSL
   or POSIX tools. Existing bash scripts now feature dual-engine execution: automatically delegating
   to Node if built, with full POSIX shell fallback for minimal CI environments.
@@ -151,7 +163,7 @@
 
 ### Changed
 
-- **`sg seed` no longer mints Component nodes for directories that are not
+- **`simplegraph seed` no longer mints Component nodes for directories that are not
   modules.** Seeding an infra repo produced `DOCS` and `GITHUB` components whose
   entire content was "Top-level module `docs/` — N tracked files". Since
   Components now carry `**Paths:**`, such a node also fires on *every* edit
@@ -327,7 +339,7 @@ real usage over 718 commits.
   lists are capped (one seeded Component spent ~1.4k tokens dumping 36 `CONTAINS`
   edges). The same query now costs ~4,900 tokens — 66% less, with every one of the
   34 nodes still represented and **nothing on the direct path hidden**.
-- **`sg seed` left Component nodes unanchored.** The structure extractor derives a
+- **`simplegraph seed` left Component nodes unanchored.** The structure extractor derives a
   Component *from* a directory, then recorded only three sample files — which
   cannot represent a 275-file module. Seeded Components now carry `**Paths:**`, so
   directory ownership works out of the box. (`SEED_VERSION` → 0.4.0.)
@@ -351,7 +363,7 @@ real usage over 718 commits.
 
 - **No migration.** Both fields are optional and are emitted only when populated,
   so a node with neither renders byte-identically to previous versions and every
-  recorded `sg seed` content hash is unaffected. `simplegraph_update_node` inserts
+  recorded `simplegraph seed` content hash is unaffected. `simplegraph_update_node` inserts
   `Symbols` / `Paths` into nodes that predate the fields instead of refusing the
   write, so an existing graph can adopt anchoring node by node.
 
@@ -374,7 +386,7 @@ worktree-based subagents, or a team whose tools all write to the same graph.
   error.
 - **Derived, regenerable Quick Index.** `graph_index.md`'s Quick Index is now
   treated as a *view* of the node files, not a hand-appended list. A new
-  `sg reindex` command and `simplegraph_reindex` tool rebuild it deterministically
+  `simplegraph reindex` command and `simplegraph_reindex` tool rebuild it deterministically
   (IDs sorted, recurring regressions annotated `(×N)`), leaving the Task Routing
   section untouched. Because the output is order-independent, this is the intended
   way to resolve `graph_index.md` merge conflicts after parallel branches. Adding
@@ -393,7 +405,7 @@ worktree-based subagents, or a team whose tools all write to the same graph.
 - **Union-merged list files.** A shipped `core/.gitattributes` (and
   `shared/.gitattributes`) marks the append-only node files `merge=union`, so two
   branches that each appended a node merge cleanly instead of conflicting on every
-  add. `graph_index.md` is deliberately excluded — regenerate it with `sg reindex`
+  add. `graph_index.md` is deliberately excluded — regenerate it with `simplegraph reindex`
   after a merge. `setup.sh` installs and refreshes these files.
 - **Trust boundary for the shared graph.** The MCP server was already read-only
   against `shared/`, making promotion a deliberate human act; that control is now
@@ -408,14 +420,14 @@ agents when its branch merges, so commit graph updates alongside the code and
 land them promptly (documented in `core/HOW_TO_UPDATE.md`).
 
 All additions are backward-compatible: the node format only grows optional
-fields, `sg seed` output is byte-identical to 0.3.0, and the shared-graph checks
+fields, `simplegraph seed` output is byte-identical to 0.3.0, and the shared-graph checks
 are inert when no `shared/` graph is present.
 
 ## [0.3.0] — 2026-07-20
 
-### New: `sg seed` — bootstrap a graph from repository history
+### New: `simplegraph seed` — bootstrap a graph from repository history
 
-The mcp package now ships a second bin, `sg`, whose first command mines an
+The mcp package now ships a second bin, `simplegraph`, whose first command mines an
 existing repository into a draft memory graph. Deterministic, offline, no API
 key required (Tier 1); an LLM enrichment seam exists behind the same extractor
 interface but is deliberately unimplemented this release.

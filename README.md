@@ -57,7 +57,7 @@ Clone the repository and install the cross-platform Node CLI:
 cd mcp
 npm install
 npm run build
-npm link    # exposes `sg` globally, or run via: node dist/seed/cli.js <cmd>
+npm link    # exposes `simplegraph` globally, or run via: node dist/seed/cli.js <cmd>
 ```
 
 ## Then give it something to remember
@@ -65,16 +65,16 @@ npm link    # exposes `sg` globally, or run via: node dist/seed/cli.js <cmd>
 A new graph doesn't have to start empty — most of what it wants is already in your git history:
 
 ```bash
-sg seed --dry-run     # mine reverts, repeat-fixes, ADRs, and TODOs. Write nothing.
-sg seed               # review the draft, then commit it
+simplegraph seed --dry-run     # mine reverts, repeat-fixes, ADRs, and TODOs. Write nothing.
+simplegraph seed               # review the draft, then commit it
 ```
 
 Deterministic, offline, no API key, full provenance on every node. On a 718-commit repo it finds around 60 nodes to start from. See [seeding](docs/seeding.md).
 
-The bundled `sg` CLI also provides cross-platform graph maintenance without bash dependencies:
-- `sg check` — validates edge targets and duplicate node IDs across `core/` and `shared/`
-- `sg stale` — detects outdated nodes (>90 days) and broken file/symbol anchors
-- `sg reindex` — rebuilds `graph_index.md` Quick Index deterministically to resolve merge conflicts
+The bundled `simplegraph` CLI also provides cross-platform graph maintenance without bash dependencies:
+- `simplegraph check` — validates edge targets and duplicate node IDs across `core/` and `shared/`
+- `simplegraph stale` — detects outdated nodes (>90 days) and broken file/symbol anchors
+- `simplegraph reindex` — rebuilds `graph_index.md` Quick Index deterministically to resolve merge conflicts
 
 ---
 
@@ -170,8 +170,8 @@ Different coding agents provide different levels of enforcement. **simplegraph**
 
 | Tool | Session-start context | Mid-task safety (MCP) | Turn-end gate (Stop hook) | Enforcement level |
 |---|---|---|---|---|
-| **Antigravity** | `.agents/plugins/simplegraph/rules/` + `AGENTS.md` | `.agents/plugins/simplegraph/mcp_config.json` | `hooks.json` (`sg hook require-doc`) | **Deterministic** |
-| **Claude Code** | `CLAUDE.md` | `.mcp.json` | `.claude/settings.json` (`sg hook require-doc`) | **Deterministic** |
+| **Antigravity** | `.agents/plugins/simplegraph/rules/` + `AGENTS.md` | `.agents/plugins/simplegraph/mcp_config.json` | `hooks.json` (`simplegraph hook require-doc`) | **Deterministic** |
+| **Claude Code** | `CLAUDE.md` | `.mcp.json` | `.claude/settings.json` (`simplegraph hook require-doc`) | **Deterministic** |
 | **Cursor** | `.cursor/rules/memory.mdc` (`alwaysApply: true`) | `.cursor/mcp.json` | _(Not supported by tool)_ | **Advisory (MCP-backed)** |
 | **Zed** | `.zed/rules/memory.md` | `.zed/settings.json` context server | _(Not supported by tool)_ | **Advisory (MCP-backed)** |
 | **Codex CLI** | `AGENTS.md` | `.codex/config.toml` | _(Not supported by tool)_ | **Advisory (MCP-backed)** |

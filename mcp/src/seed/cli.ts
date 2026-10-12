@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// sg — simplegraph CLI. First command: `sg seed`.
+// simplegraph — memory graph CLI. First command: `simplegraph seed`.
 //
 // Bootstraps a memory graph by mining the repository's own history:
 // reverts and fix commits → Regressions, merge bodies and ADRs → Decisions,
@@ -27,10 +27,10 @@ import {
   type DraftBundle, type NodeType, type SeedOptions,
 } from "./types.js";
 
-const USAGE = `sg seed [PATH] — bootstrap a simplegraph memory graph from repository history
+const USAGE = `simplegraph seed [PATH] — bootstrap a simplegraph memory graph from repository history
 
 Usage:
-  sg seed [PATH] [options]        PATH: repo root (default: cwd)
+  simplegraph seed [PATH] [options]        PATH: repo root (default: cwd)
 
 Options:
   --dry-run              mine and summarize, write nothing
@@ -112,7 +112,7 @@ export function parseArgs(argv: string[]): SeedOptions & { help: boolean; graphE
   return opts;
 }
 
-const REINDEX_USAGE = `sg reindex [--graph <path>] — regenerate graph_index.md's Quick Index from the node files
+const REINDEX_USAGE = `simplegraph reindex [--graph <path>] — regenerate graph_index.md's Quick Index from the node files
 
 The Quick Index is a derived view of the nodes. Regenerating it (rather than
 hand-editing) keeps it deterministic and order-independent, which is the
@@ -120,7 +120,7 @@ intended way to resolve index merge conflicts after parallel agents or branches
 both touched it. Node files are the source of truth and are never modified.
 
 Usage:
-  sg reindex [PATH] [--graph <path>]   PATH: repo root (default: cwd; graph defaults to PATH/core)
+  simplegraph reindex [PATH] [--graph <path>]   PATH: repo root (default: cwd; graph defaults to PATH/core)
   -h, --help                           show this help
 `;
 
@@ -158,7 +158,7 @@ export async function runReindex(argv: string[]): Promise<number> {
   return 0;
 }
 
-const CHECK_USAGE = `sg check [PATH] [--graph <path>] [--shared <path>] — verify memory graph consistency
+const CHECK_USAGE = `simplegraph check [PATH] [--graph <path>] [--shared <path>] — verify memory graph consistency
 
 Verifies:
   • No duplicate node IDs (across core/ and shared/)
@@ -166,7 +166,7 @@ Verifies:
   • Shared graph attribution (advisory warning on un-attributed nodes in shared/)
 
 Usage:
-  sg check [PATH] [options]    PATH: repo root (default: cwd; graph defaults to PATH/core)
+  simplegraph check [PATH] [options]    PATH: repo root (default: cwd; graph defaults to PATH/core)
 
 Options:
   --graph <path>    path to core/ directory
@@ -217,7 +217,7 @@ export async function runCheckCli(argv: string[]): Promise<number> {
   return result.ok ? 0 : 1;
 }
 
-const STALE_USAGE = `sg stale [PATH] [--graph <path>] [--days <n>] — detect stale or missing graph references
+const STALE_USAGE = `simplegraph stale [PATH] [--graph <path>] [--days <n>] — detect stale or missing graph references
 
 Checks for:
   • Nodes with LastUpdated older than MAX_AGE_DAYS (default: 90)
@@ -226,7 +226,7 @@ Checks for:
   • Nodes anchored to **Symbols:** absent from auto_map.md (if present)
 
 Usage:
-  sg stale [PATH] [options]    PATH: repo root (default: cwd; graph defaults to PATH/core)
+  simplegraph stale [PATH] [options]    PATH: repo root (default: cwd; graph defaults to PATH/core)
 
 Options:
   --graph <path>    path to core/ directory
@@ -278,12 +278,12 @@ export async function runStaleCli(argv: string[]): Promise<number> {
   return result.ok ? 0 : 1;
 }
 
-const CORRECT_USAGE = `sg correct <id> <correction> [options] — record an erratum on an existing node
+const CORRECT_USAGE = `simplegraph correct <id> <correction> [options] — record an erratum on an existing node
 
 Appends '⚠ CORRECTED <date>: <correction>' to the node's Summary and updates LastUpdated.
 
 Usage:
-  sg correct <id> <correction> [--date <YYYY-MM-DD>] [--graph <path>]
+  simplegraph correct <id> <correction> [--date <YYYY-MM-DD>] [--graph <path>]
 
 Options:
   --date <YYYY-MM-DD>  date of correction (default: today)
@@ -317,7 +317,7 @@ export async function runCorrectCli(argv: string[]): Promise<number> {
   }
 
   if (positionals.length < 2) {
-    process.stderr.write(`Error: sg correct requires both <id> and <correction>.\n\n${CORRECT_USAGE}`);
+    process.stderr.write(`Error: simplegraph correct requires both <id> and <correction>.\n\n${CORRECT_USAGE}`);
     return 1;
   }
   const id = positionals[0];
@@ -350,12 +350,12 @@ export async function runCorrectCli(argv: string[]): Promise<number> {
   return 0;
 }
 
-const VERIFY_USAGE = `sg verify <id> [options] — stamp a node as verified against code or production
+const VERIFY_USAGE = `simplegraph verify <id> [options] — stamp a node as verified against code or production
 
 Updates LastVerified to today (or the passed date) and auto-captures HEAD commit SHA.
 
 Usage:
-  sg verify <id> [--date <YYYY-MM-DD>] [--graph <path>]
+  simplegraph verify <id> [--date <YYYY-MM-DD>] [--graph <path>]
 
 Options:
   --date <YYYY-MM-DD>  date of verification (default: today)
@@ -389,7 +389,7 @@ export async function runVerifyCli(argv: string[]): Promise<number> {
   }
 
   if (positionals.length < 1) {
-    process.stderr.write(`Error: sg verify requires a node <id>.\n\n${VERIFY_USAGE}`);
+    process.stderr.write(`Error: simplegraph verify requires a node <id>.\n\n${VERIFY_USAGE}`);
     return 1;
   }
   const id = positionals[0];
@@ -421,12 +421,12 @@ export async function runVerifyCli(argv: string[]): Promise<number> {
   return 0;
 }
 
-const PREFLIGHT_USAGE = `sg preflight "<intent>" [options] — check architectural rules before editing
+const PREFLIGHT_USAGE = `simplegraph preflight "<intent>" [options] — check architectural rules before editing
 
 Matches intent against anti-patterns, invariants, decisions, and known regressions.
 
 Usage:
-  sg preflight "<intent>" [--graph <path>]
+  simplegraph preflight "<intent>" [--graph <path>]
 
 Options:
   --graph <path>    path to core/ directory
@@ -454,7 +454,7 @@ export async function runPreflightCli(argv: string[]): Promise<number> {
   }
 
   if (positionals.length < 1) {
-    process.stderr.write(`Error: sg preflight requires an intent string.\n\n${PREFLIGHT_USAGE}`);
+    process.stderr.write(`Error: simplegraph preflight requires an intent string.\n\n${PREFLIGHT_USAGE}`);
     return 1;
   }
   const intent = positionals.join(" ");
@@ -486,13 +486,13 @@ export async function runPreflightCli(argv: string[]): Promise<number> {
   return 0;
 }
 
-const HOOK_USAGE = `sg hook <name> [options] — run agent lifecycle hooks
+const HOOK_USAGE = `simplegraph hook <name> [options] — run agent lifecycle hooks
 
 Hooks:
   require-doc    "Document before you finish" Stop hook check
 
 Usage:
-  sg hook require-doc [--graph <path>] [--repo <path>]
+  simplegraph hook require-doc [--graph <path>] [--repo <path>]
   -h, --help     show this help
 `;
 
@@ -571,7 +571,7 @@ export function summarize(bundle: DraftBundle): string {
   }
   const density = bundle.nodes.length ? (edgeCount / bundle.nodes.length).toFixed(2) : "0";
 
-  lines.push(`sg seed v${SEED_VERSION} — draft graph for ${bundle.repoRoot}`);
+  lines.push(`simplegraph seed v${SEED_VERSION} — draft graph for ${bundle.repoRoot}`);
   lines.push(`  window: ${bundle.options.since ?? "(default)"} · HEAD ${bundle.headSha.slice(0, 12)} (${bundle.headDate})`);
   lines.push("");
   lines.push(`  Nodes: ${bundle.nodes.length} total`);
@@ -683,9 +683,9 @@ export async function runSeed(argv: string[]): Promise<number> {
   return 0;
 }
 
-// Entry point when invoked as `sg`.
+// Entry point when invoked as `simplegraph`.
 const invoked = process.argv[1] ?? "";
-if (/\b(sg|cli)(\.js|\.ts)?$/.test(path.basename(invoked))) {
+if (/\b(simplegraph|cli)(\.js|\.ts)?$/.test(path.basename(invoked))) {
   const [command, ...rest] = process.argv.slice(2);
   const runFail = (e: unknown) => {
     process.stderr.write(`Error: ${(e as Error).message}\n`);
@@ -693,7 +693,7 @@ if (/\b(sg|cli)(\.js|\.ts)?$/.test(path.basename(invoked))) {
   };
   if (!command || command === "-h" || command === "--help") {
     process.stdout.write(
-      `sg — simplegraph CLI\n\nCommands:\n` +
+      `simplegraph — memory graph CLI\n\nCommands:\n` +
       `  seed       ${USAGE.split("\n")[0]}\n` +
       `  reindex    ${REINDEX_USAGE.split("\n")[0]}\n` +
       `  check      ${CHECK_USAGE.split("\n")[0]}\n` +

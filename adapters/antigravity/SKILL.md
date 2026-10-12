@@ -47,7 +47,7 @@ After adding nodes, call `simplegraph_update_index` to regenerate `core/graph_in
 ## 4. Graph Maintenance CLI
 
 Run these commands from the project root:
-- `sg check` — Verify graph consistency (no duplicate IDs, all edges resolve).
-- `sg reindex` — Deterministically regenerate `core/graph_index.md`.
-- `sg stale` — Detect outdated nodes or missing file anchors.
-- `sg seed` — Mine git history for candidate nodes.
+- `simplegraph check` — Verify graph consistency (no duplicate IDs, all edges resolve).
+- `simplegraph reindex` — Deterministically regenerate `core/graph_index.md`.
+- `simplegraph stale` — Detect outdated nodes or missing file anchors.
+- `simplegraph seed` — Mine git history for candidate nodes.
