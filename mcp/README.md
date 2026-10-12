@@ -69,6 +69,7 @@ npm link          # exposes `simplegraph` globally, or invoke via `node dist/see
   simplegraph seed /path/to/your/project --dry-run
   ```
 
+- **`simplegraph index [path]`**: Prints `graph_index.md` with the Quick Index rendered from the current node files (read-only; what `simplegraph_index` returns). For hooks and other non-MCP readers, and required for them in derived mode.
 - **`simplegraph reindex [path]`**: Regenerates `graph_index.md`'s Quick Index from current node files. Deterministic, sorted, and order-independent — ideal for resolving `graph_index.md` merge conflicts after parallel branch merges.
   ```bash
   simplegraph reindex /path/to/your/project
@@ -480,6 +481,21 @@ things keep that friction low so graph updates don't get deferred:
   `simplegraph_reindex` tool) — the output is sorted and order-independent, so
   both sides resolve to the same index. `components/*.md` is one node per file,
   so parallel work touches different files.
+- **Derived mode: no stored Quick Index at all (opt-in).** Regenerating still
+  leaves a conflict for a *hosted* merge button, which cannot run `reindex`:
+  each row holds every node of its type on one line, so two branches that add a
+  node of the same type collide on it. Put this line anywhere in `graph_index.md`:
+
+  ```
+  <!-- simplegraph:index=derived -->
+  ```
+
+  and the file stores only hand-authored text (header, Task Routing). The Quick
+  Index rows and `LastUpdated` hold a fixed placeholder, node writes leave the
+  file alone, and `simplegraph_index` / `simplegraph index` render the rows from the
+  nodes on read. Readers without MCP (session-start hooks, other editors) should
+  run `simplegraph index` instead of reading the file. Run `simplegraph reindex` once after adding
+  the marker to replace the stored rows with placeholders.
 - **Propagation is not instant.** An agent's node reaches other agents only when
   its branch merges. Commit graph updates in the *same commit* as the code and
   land them promptly; `git fetch` before starting parallel work so you begin from

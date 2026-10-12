@@ -75,6 +75,7 @@ The bundled `simplegraph` CLI also provides cross-platform graph maintenance wit
 - `simplegraph check` — validates edge targets and duplicate node IDs across `core/` and `shared/`
 - `simplegraph stale` — detects outdated nodes (>90 days) and broken file/symbol anchors
 - `simplegraph reindex` — rebuilds `graph_index.md` Quick Index deterministically to resolve merge conflicts
+- `simplegraph index` — prints the index with the Quick Index rendered from the nodes (for hooks and non-MCP readers; see derived mode in [docs/multi-agent.md](docs/multi-agent.md))
 
 ---
 

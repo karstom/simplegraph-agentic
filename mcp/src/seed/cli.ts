@@ -16,7 +16,7 @@ import * as readline from "readline";
 import { buildContext, DEFAULT_COMPONENT_DENYLIST } from "./mine.js";
 import { assembleBundle } from "./bundle.js";
 import { mergeBundle, readState, DRAFT_FILE } from "./merge.js";
-import { regenerateIndex } from "../reindex.js";
+import { regenerateIndex, renderIndex } from "../reindex.js";
 import { runCheck } from "../check.js";
 import { runStaleCheck } from "../stale.js";
 import { runRequireDocHook } from "../hook.js";
@@ -152,9 +152,50 @@ export async function runReindex(argv: string[]): Promise<number> {
   }
 
   const result = regenerateIndex(graphRoot);
-  process.stdout.write(`✓ Regenerated ${path.join(graphRoot, "graph_index.md")} — ${result.total} node(s) indexed:\n`);
+  process.stdout.write(result.derived
+    ? `✓ ${path.join(graphRoot, "graph_index.md")} is derived (rendered on read; nothing stored) — ${result.total} node(s):\n`
+    : `✓ Regenerated ${path.join(graphRoot, "graph_index.md")} — ${result.total} node(s) indexed:\n`);
   for (const r of result.rows) process.stdout.write(`    ${r.label.padEnd(26)} ${r.count}\n`);
   for (const w of result.warnings) process.stdout.write(`    ⚠ ${w}\n`);
+  return 0;
+}
+
+const INDEX_USAGE = `simplegraph index [PATH] [--graph <path>] — print graph_index.md with the Quick Index rendered from the nodes
+
+Read-only. This is what the simplegraph_index MCP tool returns, for readers
+without MCP: session-start hooks, other editors, scripts. In a derived-mode
+graph (graph_index.md contains <!-- simplegraph:index=derived -->) it is the
+only place the Quick Index exists; the stored file holds placeholders.
+
+Usage:
+  simplegraph index [PATH] [--graph <path>]   PATH: repo root (default: cwd; graph defaults to PATH/core)
+  -h, --help                         show this help
+`;
+
+export async function runIndexCli(argv: string[]): Promise<number> {
+  const args = [...argv];
+  let repoPath = process.cwd();
+  let graphRoot = "";
+  while (args.length) {
+    const a = args.shift()!;
+    if (a === "-h" || a === "--help") { process.stdout.write(INDEX_USAGE); return 0; }
+    if (a === "--graph") {
+      const v = args.shift();
+      if (v === undefined) throw new Error("--graph requires a value");
+      graphRoot = path.resolve(v);
+    } else if (a.startsWith("-")) {
+      throw new Error(`Unknown option: ${a}\n\n${INDEX_USAGE}`);
+    } else {
+      repoPath = path.resolve(a);
+    }
+  }
+  if (!graphRoot) graphRoot = path.join(repoPath, "core");
+  const rendered = renderIndex(graphRoot);
+  if (rendered === null) {
+    process.stderr.write(`graph_index.md not found in ${graphRoot}.\n`);
+    return 1;
+  }
+  process.stdout.write(rendered);
   return 0;
 }
 
@@ -695,6 +736,7 @@ if (/\b(simplegraph|cli)(\.js|\.ts)?$/.test(path.basename(invoked))) {
     process.stdout.write(
       `simplegraph — memory graph CLI\n\nCommands:\n` +
       `  seed       ${USAGE.split("\n")[0]}\n` +
+      `  index      ${INDEX_USAGE.split("\n")[0]}\n` +
       `  reindex    ${REINDEX_USAGE.split("\n")[0]}\n` +
       `  check      ${CHECK_USAGE.split("\n")[0]}\n` +
       `  stale      ${STALE_USAGE.split("\n")[0]}\n` +
@@ -706,6 +748,8 @@ if (/\b(simplegraph|cli)(\.js|\.ts)?$/.test(path.basename(invoked))) {
     process.exit(command ? 0 : 1);
   } else if (command === "seed") {
     runSeed(rest).then(code => process.exit(code)).catch(runFail);
+  } else if (command === "index") {
+    runIndexCli(rest).then(code => process.exit(code)).catch(runFail);
   } else if (command === "reindex") {
     runReindex(rest).then(code => process.exit(code)).catch(runFail);
   } else if (command === "check") {

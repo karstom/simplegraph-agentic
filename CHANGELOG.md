@@ -16,6 +16,16 @@
 
 ### Added
 
+- **Derived-index mode: the Quick Index is rendered on read, never stored (opt-in).**
+  Regenerated rows still conflict on hosted merges: each row holds every node of
+  its type on one line, so two PRs that each add a node of the same type collide
+  there, and a merge button can't run `reindex`. A `graph_index.md` containing
+  `<!-- simplegraph:index=derived -->` stores placeholders for the rows and
+  `LastUpdated`; node writes no longer touch it, and `simplegraph_index` renders
+  the rows from the nodes. New `simplegraph index` prints the rendered index for hooks and
+  non-MCP readers. Graphs without the marker behave exactly as before, except
+  that `simplegraph_index` now also renders on read, so a stale stored index is
+  never served.
 - **`simplegraph_correct_node` MCP tool & `simplegraph correct` CLI command.** Record an erratum
   or correction on an existing node without rewriting the entire text. Appends
   `⚠ CORRECTED <date>: <correction>` to `Summary` and updates `LastUpdated`.

@@ -10,7 +10,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseNodes, formatNode } from "./parser.js";
 import { atomicWriteFileSync, withGraphLock } from "./fsutil.js";
-import { regenerateIndexContent, regenerateIndex } from "./reindex.js";
+import { regenerateIndexContent, regenerateIndex, renderIndex, stripDerivedContent, DERIVED_MARKER, DERIVED_PLACEHOLDER } from "./reindex.js";
+import { runIndexCli } from "./seed/cli.js";
 import { handleAddNode } from "./index.js";
 
 function tmp(): string {
@@ -229,4 +230,85 @@ test("regenerateIndex populates Anti-Patterns row when anti_patterns.md has node
   const index = readFileSync(join(dir, "graph_index.md"), "utf-8");
   const row = index.split("\n").find(l => l.includes("**Anti-Patterns**"))!;
   assert.match(row, /ANTI_LEAK, ANTI_RACE/);
+});
+
+// ── Derived mode: the Quick Index is rendered on read, never stored ───────────
+
+function derivedGraph(): string {
+  const dir = graphWithIndex();
+  const stored = stripDerivedContent(
+    `${DERIVED_MARKER}\n> **LastUpdated:** 2020-01-01\n\n` + INDEX_TEMPLATE
+  );
+  writeFileSync(join(dir, "graph_index.md"), stored);
+  return dir;
+}
+
+test("derived mode: add_node leaves graph_index.md byte-identical", () => {
+  const dir = derivedGraph();
+  const before = readFileSync(join(dir, "graph_index.md"), "utf-8");
+  const result = handleAddNode(
+    { type: "Decision", id: "DEC_NEW", label: "New", summary: "s.", priority: "LOW" },
+    dir
+  );
+  assert.equal(result.isError, undefined);
+  assert.equal(readFileSync(join(dir, "graph_index.md"), "utf-8"), before);
+  assert.match(result.content[0].text, /derived/);
+});
+
+test("derived mode: two branches adding same-type nodes store identical indexes (no conflict)", () => {
+  const a = derivedGraph();
+  const b = derivedGraph();
+  handleAddNode({ type: "Regression", id: "REG_FROM_A", label: "A", summary: "s.", priority: "LOW" }, a);
+  handleAddNode({ type: "Regression", id: "REG_FROM_B", label: "B", summary: "s.", priority: "LOW" }, b);
+  assert.equal(readFileSync(join(a, "graph_index.md"), "utf-8"), readFileSync(join(b, "graph_index.md"), "utf-8"));
+});
+
+test("derived mode: renderIndex fills the rows and the date from the nodes", () => {
+  const dir = derivedGraph();
+  writeFileSync(join(dir, "decisions.md"), nodeBlock("DEC_B", "Decision") + "\n\n---\n\n" + nodeBlock("DEC_A", "Decision") + "\n");
+  const rendered = renderIndex(dir)!;
+  assert.match(rendered.split("\n").find(l => l.includes("**Decisions**"))!, /DEC_A, DEC_B/);
+  assert.match(rendered, /\*\*LastUpdated:\*\* 2026-01-01/);
+  // Rendering never writes.
+  assert.ok(readFileSync(join(dir, "graph_index.md"), "utf-8").includes(DERIVED_PLACEHOLDER));
+  assert.ok(!readFileSync(join(dir, "graph_index.md"), "utf-8").includes("DEC_A"));
+});
+
+test("derived mode: reindex scrubs hand-filled rows but keeps the Anti-Patterns pointer and Task Routing", () => {
+  const dir = derivedGraph();
+  const path = join(dir, "graph_index.md");
+  writeFileSync(path, readFileSync(path, "utf-8").replace(
+    `| **Invariants** | ${DERIVED_PLACEHOLDER} |`, "| **Invariants** | INV_PASTED_BY_HAND |"));
+  const res = regenerateIndex(dir);
+  assert.equal(res.derived, true);
+  const stored = readFileSync(path, "utf-8");
+  assert.ok(!stored.includes("INV_PASTED_BY_HAND"));
+  assert.ok(stored.includes("| **Anti-Patterns** | _(never generate)_ |"));
+  assert.ok(stored.includes("| **Auth** | `invariants.md` |"));
+  regenerateIndex(dir);
+  assert.equal(readFileSync(path, "utf-8"), stored, "idempotent");
+});
+
+test("persisted mode is unchanged: reindex writes the rows and renderIndex matches the file", () => {
+  const dir = graphWithIndex();
+  writeFileSync(join(dir, "invariants.md"), nodeBlock("INV_KEEP", "Invariant") + "\n");
+  const res = regenerateIndex(dir);
+  assert.equal(res.derived, undefined);
+  const stored = readFileSync(join(dir, "graph_index.md"), "utf-8");
+  assert.ok(stored.includes("INV_KEEP"));
+  assert.equal(renderIndex(dir), stored);
+});
+
+test("`simplegraph index` prints the rendered index and never writes", async () => {
+  const dir = derivedGraph();
+  writeFileSync(join(dir, "watchlists.md"), nodeBlock("WATCH_CLI", "Watchlist") + "\n");
+  const before = readFileSync(join(dir, "graph_index.md"), "utf-8");
+  const chunks: string[] = [];
+  const orig = process.stdout.write.bind(process.stdout);
+  (process.stdout as any).write = (s: string) => { chunks.push(String(s)); return true; };
+  let code: number;
+  try { code = await runIndexCli(["--graph", dir]); } finally { (process.stdout as any).write = orig; }
+  assert.equal(code, 0);
+  assert.match(chunks.join(""), /WATCH_CLI/);
+  assert.equal(readFileSync(join(dir, "graph_index.md"), "utf-8"), before);
 });
