@@ -161,7 +161,7 @@ export function runCheck(options: {
     for (const dup of duplicateIds) {
       linesOut.push(`  ${dup.id} (${dup.files.join(", ")})`);
     }
-    linesOut.push("  Rename one, or merge the two definitions into a single NODE block, then re-run 'sg reindex'.");
+    linesOut.push("  Rename one, or merge the two definitions into a single NODE block, then re-run 'simplegraph reindex'.");
   }
 
   if (brokenEdges.length > 0) {

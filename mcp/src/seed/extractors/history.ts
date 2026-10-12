@@ -1,4 +1,4 @@
-// sg seed — git-history extractors: Regression and Decision nodes.
+// simplegraph seed — git-history extractors: Regression and Decision nodes.
 // Deterministic Tier 1: conventional-commit prefixes, revert detection,
 // repeated-fix clustering, merge-commit bodies, ADR/RFC documents.
 

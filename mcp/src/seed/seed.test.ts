@@ -1,4 +1,4 @@
-// sg seed test suite — runs against throwaway fixture git repositories built
+// simplegraph seed test suite — runs against throwaway fixture git repositories built
 // in a tmpdir, never against the live repo. Covers extraction, provenance,
 // idempotency, hand-edit conflicts, dedupe, and edge integrity.
 // Run: npm test (from mcp/)

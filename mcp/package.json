@@ -5,7 +5,6 @@
   "type": "module",
   "bin": {
     "simplegraph-mcp": "./dist/index.js",
-    "sg": "./dist/seed/cli.js",
     "simplegraph": "./dist/seed/cli.js"
   },
   "scripts": {

@@ -299,7 +299,7 @@ test("persisted mode is unchanged: reindex writes the rows and renderIndex match
   assert.equal(renderIndex(dir), stored);
 });
 
-test("`sg index` prints the rendered index and never writes", async () => {
+test("`simplegraph index` prints the rendered index and never writes", async () => {
   const dir = derivedGraph();
   writeFileSync(join(dir, "watchlists.md"), nodeBlock("WATCH_CLI", "Watchlist") + "\n");
   const before = readFileSync(join(dir, "graph_index.md"), "utf-8");

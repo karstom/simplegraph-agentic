@@ -1,4 +1,4 @@
-// sg seed — stable, content-derived node IDs and content hashing.
+// simplegraph seed — stable, content-derived node IDs and content hashing.
 //
 // IDs must be deterministic across runs (idempotency) and survive cosmetic
 // changes like a TODO moving between files (dedupe). Format:
