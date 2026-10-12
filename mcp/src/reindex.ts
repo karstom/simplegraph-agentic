@@ -10,6 +10,15 @@
 // Regeneration rewrites ONLY the node-type rows of the Quick Index table. The
 // header, Multi-Repo note, Anti-Patterns/Resolved pointer rows, and the whole
 // hand-authored Task Routing section are left untouched.
+//
+// DERIVED MODE (opt-in). Persisting the derived rows still conflicts: each row
+// holds every node of its type on ONE line, so any two branches that add a node
+// of the same type collide there, and a hosted merge button cannot run
+// `reindex` to settle it. A graph whose graph_index.md contains DERIVED_MARKER
+// never stores the rows or the LastUpdated date: the file keeps placeholders,
+// writes leave it alone, and readers (`simplegraph_index`, `simplegraph index`)
+// render the rows from the nodes on demand. Only hand-authored text is
+// committed, so node additions never touch the index at all.
 
 import * as fs from "fs";
 import * as path from "path";
@@ -32,6 +41,42 @@ export interface ReindexResult {
   rows: { label: string; count: number }[];
   total: number;
   warnings: string[];
+  /** True when the graph is in derived mode: nothing derived was written. */
+  derived?: boolean;
+}
+
+/** A graph_index.md containing this line is rendered on read, never persisted. */
+export const DERIVED_MARKER = "<!-- simplegraph:index=derived -->";
+/** What a derived-mode index stores in place of each row's node list and the date. */
+export const DERIVED_PLACEHOLDER = "_(derived — rendered on read)_";
+
+export function isDerivedIndex(content: string): boolean {
+  return content.includes(DERIVED_MARKER);
+}
+
+function rowPatternFor(label: string): RegExp {
+  // Match a table row `| **<label>** | <nodes> | <file> |` and capture the
+  // middle (nodes) cell. Escape the label defensively (it may contain &).
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(\\|\\s*\\*\\*${escaped}\\*\\*\\s*\\|)([^|]*)(\\|)`, "i");
+}
+
+const LAST_UPDATED = /(>\s*\*\*LastUpdated:\*\*\s*)[^\r\n]+/i;
+
+/**
+ * The stored form of a derived-mode index: each node-type row's node cell (all
+ * but Anti-Patterns) and the LastUpdated date replaced by DERIVED_PLACEHOLDER. Pure and idempotent, so
+ * every branch stores byte-identical derived content and nothing can conflict.
+ */
+export function stripDerivedContent(content: string): string {
+  let out = content;
+  for (const [type, label] of Object.entries(ROW_FOR_TYPE)) {
+    // The Anti-Patterns row often holds a hand-written pointer, which rendering
+    // keeps when there are no anti-pattern nodes, so it is not ours to blank.
+    if (type === "antipattern") continue;
+    out = out.replace(rowPatternFor(label), (_s, prefix, _mid, suffix) => `${prefix} ${DERIVED_PLACEHOLDER} ${suffix}`);
+  }
+  return out.replace(LAST_UPDATED, `$1${DERIVED_PLACEHOLDER}`);
 }
 
 /** Load every node in a graph root (the four list files plus components/). */
@@ -95,11 +140,8 @@ export function regenerateIndexContent(content: string, nodes: GraphNode[]): { c
       continue;
     }
 
-    // Match a table row `| **<label>** | <nodes> | <file> |` and rewrite only
-    // the middle (nodes) cell. The label may contain regex metachars (&) — none
-    // today, but escape defensively.
-    const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const rowPattern = new RegExp(`(\\|\\s*\\*\\*${escaped}\\*\\*\\s*\\|)([^|]*)(\\|)`, "i");
+    // Rewrite only the middle (nodes) cell of the row.
+    const rowPattern = rowPatternFor(label);
     if (!rowPattern.test(out)) {
       result.warnings.push(`Quick Index row "${label}" not found — ${group.length} node(s) not listed`);
       continue;
@@ -114,7 +156,7 @@ export function regenerateIndexContent(content: string, nodes: GraphNode[]): { c
     .filter((d): d is string => !!d && /^\d{4}-\d{2}-\d{2}$/.test(d));
   if (dates.length > 0) {
     const latestDate = dates.sort().reverse()[0];
-    out = out.replace(/(>\s*\*\*LastUpdated:\*\*\s*)[^\r\n]+/i, `$1${latestDate}`);
+    out = out.replace(LAST_UPDATED, `$1${latestDate}`);
   }
 
   return { content: out, result };
@@ -127,7 +169,28 @@ export function regenerateIndex(graphRoot: string): ReindexResult {
     return { rows: [], total: 0, warnings: [`graph_index.md not found at ${indexPath} — nothing to reindex`] };
   }
   const nodes = loadAllNodes(graphRoot);
-  const { content, result } = regenerateIndexContent(fs.readFileSync(indexPath, "utf-8"), nodes);
+  const stored = fs.readFileSync(indexPath, "utf-8");
+  const { content, result } = regenerateIndexContent(stored, nodes);
+  if (isDerivedIndex(stored)) {
+    // Derived mode: keep the stored file free of derived content. Normally a
+    // no-op; it only writes to scrub rows someone filled in by hand.
+    const normalized = stripDerivedContent(stored);
+    if (normalized !== stored) atomicWriteFileSync(indexPath, normalized);
+    return { ...result, derived: true };
+  }
   atomicWriteFileSync(indexPath, content);
   return result;
+}
+
+/**
+ * graph_index.md as a reader should see it: the stored file with the Quick
+ * Index rows and LastUpdated filled in from the current nodes. Never writes.
+ * In derived mode this is the only place the rows exist; in persisted mode it
+ * matches the file whenever the file is current. Null when there is no index.
+ */
+export function renderIndex(graphRoot: string): string | null {
+  const indexPath = path.join(graphRoot, "graph_index.md");
+  if (!fs.existsSync(indexPath)) return null;
+  const { content } = regenerateIndexContent(fs.readFileSync(indexPath, "utf-8"), loadAllNodes(graphRoot));
+  return content;
 }

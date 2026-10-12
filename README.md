@@ -75,6 +75,7 @@ The bundled `sg` CLI also provides cross-platform graph maintenance without bash
 - `sg check` — validates edge targets and duplicate node IDs across `core/` and `shared/`
 - `sg stale` — detects outdated nodes (>90 days) and broken file/symbol anchors
 - `sg reindex` — rebuilds `graph_index.md` Quick Index deterministically to resolve merge conflicts
+- `sg index` — prints the index with the Quick Index rendered from the nodes (for hooks and non-MCP readers; see derived mode in [docs/multi-agent.md](docs/multi-agent.md))
 
 ---
 

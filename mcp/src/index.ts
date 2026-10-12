@@ -22,7 +22,7 @@ import { parseNodes, formatNode, findNodeBlock, escapeRe, type GraphNode } from 
 import { buildContext } from "./seed/mine.js";
 import { selectDecisionCandidates, decisionIdFor, pullRequestTrail } from "./seed/candidates.js";
 import { atomicWriteFileSync, withGraphLock } from "./fsutil.js";
-import { regenerateIndex } from "./reindex.js";
+import { regenerateIndex, renderIndex } from "./reindex.js";
 import { getHeadCommit } from "./gitutil.js";
 
 // ── Config ────────────────────────────────────────────────────────────────────
@@ -841,7 +841,7 @@ function handleVerifyNodeLocked(
   const index = regenerateIndex(graphRoot);
   const indexNote = index.warnings.length
     ? `\n⚠ Index: ${index.warnings.join("; ")}`
-    : `\n✓ graph_index.md regenerated.`;
+    : index.derived ? `\n✓ Index is derived (rendered on read) — nothing written.` : `\n✓ graph_index.md regenerated.`;
 
   return ok(`✓ Verified NODE: ${id} (LastVerified: ${date}${headCommit ? `, Commit: ${headCommit}` : ""}).${indexNote}`);
 }
@@ -1021,7 +1021,7 @@ function handleAddNodeLocked(
   const attrib = resolvedAuthor ? ` (author: ${resolvedAuthor}${resolvedSession ? `, session: ${resolvedSession}` : ""})` : "";
   const indexNote = index.warnings.length
     ? `\n⚠ Index: ${index.warnings.join("; ")}`
-    : `\n✓ graph_index.md regenerated (${index.total} node(s) indexed).`;
+    : index.derived ? `\n✓ Index is derived (rendered on read) — nothing written.` : `\n✓ graph_index.md regenerated (${index.total} node(s) indexed).`;
   const propMsg = propagatedInvariants.length > 0
     ? `\n✓ Propagated blast radius to invariant: ${propagatedInvariants.join(", ")}.`
     : "";
@@ -1697,14 +1697,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     switch (name) {
 
       case "simplegraph_index": {
-        const content = readGraphFile("graph_index.md");
+        // Render rather than read: in derived mode the stored file holds only
+        // placeholders, and in persisted mode this also corrects a stale file.
+        const content = renderIndex(GRAPH_ROOT);
         if (!content) return fail(
           `graph_index.md not found at ${GRAPH_ROOT}. ` +
           `Set SIMPLEGRAPH_ROOT env var to your project's core/ directory.`
         );
         let result = content;
         if (SHARED_ROOT) {
-          const shared = readGraphFile("graph_index.md", SHARED_ROOT);
+          const shared = renderIndex(SHARED_ROOT);
           if (shared) result += `\n\n---\n\n**Shared graph** (${SHARED_ROOT}):\n\n${shared}`;
         }
         return ok(result);
@@ -1957,7 +1959,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           const index = regenerateIndex(GRAPH_ROOT);
           const indexNote = index.warnings.length
             ? `\n⚠ Index: ${index.warnings.join("; ")}`
-            : `\n✓ graph_index.md regenerated — ${id} no longer in Active Regressions.`;
+            : index.derived ? `\n✓ Index is derived (rendered on read) — nothing written.` : `\n✓ graph_index.md regenerated — ${id} no longer in Active Regressions.`;
 
           return ok(
             `✓ Archived NODE: ${id} → archive/resolved_regressions.md.${indexNote}\n\n` +
@@ -1981,7 +1983,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           }
           const breakdown = index.rows.map(r => `${r.label}: ${r.count}`).join(", ");
           const suffix = index.warnings.length ? `\n⚠ ${index.warnings.join("; ")}` : "";
-          const lead = id ? `✓ Regenerated graph_index.md (${id} included). ` : "✓ Regenerated graph_index.md. ";
+          const lead = index.derived
+            ? "✓ Index is derived (rendered on read) — nothing written. "
+            : id ? `✓ Regenerated graph_index.md (${id} included). ` : "✓ Regenerated graph_index.md. ";
           return ok(`${lead}${index.total} node(s) indexed — ${breakdown}.${suffix}`);
         });
       }
